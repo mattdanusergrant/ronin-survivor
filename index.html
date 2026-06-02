@@ -292,7 +292,7 @@ function spawnEnemy(boss=false){
   const ang = rand(0, TAU), dist = Math.max(W,H) * 0.62 + 40;
   const x = game.cam.x + Math.cos(ang) * dist, y = game.cam.y + Math.sin(ang) * dist;
   if (boss){
-    enemies.push({ x, y, r:30, hp:900*timeMul(), maxhp:900*timeMul(), speed:46, dmg:30,
+    enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
       xp:60, color:'#7a1f1a', boss:true, hit:0, sep:0 });
     fx.push({ kind:'warn', t:0, life:1.4 }); return;
   }
@@ -574,7 +574,7 @@ function update(dt){
   const want = spawnInterval();
   while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
   game.bossT += dt;
-  if (game.bossT >= 60){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
+  if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
 
   // enemies move toward player + separation + contact
   for (const e of enemies){
