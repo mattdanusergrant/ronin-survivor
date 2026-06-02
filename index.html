@@ -134,6 +134,7 @@ const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 500;  // target visible world width; smaller screens zoom out
+const stickBase = { cx:90, cy:0, r:56 };  // fixed visible joystick base (cy set in resize)
 
 function resize(){
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -143,6 +144,7 @@ function resize(){
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   // zoom out on narrow screens so visible world is at least DESIGN_W wide
   viewScale = Math.min(1, W / DESIGN_W);
+  stickBase.cy = H - 110;  // park the joystick base above the bottom edge / home-bar
 }
 window.addEventListener('resize', resize); resize();
 
@@ -253,7 +255,7 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
 
-// virtual joystick (drag anywhere)
+// virtual joystick: visible base at bottom-left, plus drag-anywhere fallback
 let stick = { on:false, dx:0, dy:0, ox:0, oy:0, cx:0, cy:0 };
 function pStart(x,y){ stick.on=true; stick.ox=x; stick.oy=y; stick.cx=x; stick.cy=y; stick.dx=0; stick.dy=0; }
 function pMove(x,y){
@@ -838,8 +840,8 @@ function draw(){
 
   ctx.restore();
 
-  // joystick
-  if (stick.on) drawStick();
+  // joystick — fixed base visible during play, knob reflects current direction
+  if (game.state === STATE.PLAY) drawStick();
 }
 
 function drawGround(camX, camY, VW, VH){
@@ -1089,11 +1091,21 @@ function drawFx(f){
 }
 
 function drawStick(){
-  ctx.save(); ctx.globalAlpha=0.5;
-  ctx.strokeStyle='#fff'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(stick.ox,stick.oy,46,0,TAU); ctx.stroke();
-  ctx.fillStyle='rgba(255,255,255,0.6)';
-  ctx.beginPath(); ctx.arc(stick.ox+stick.dx*46, stick.oy+stick.dy*46, 18,0,TAU); ctx.fill();
+  const active = stick.on;
+  ctx.save();
+  // base ring (always visible during play)
+  ctx.globalAlpha = active ? 0.55 : 0.22;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(stickBase.cx, stickBase.cy, stickBase.r, 0, TAU); ctx.stroke();
+  // center dot
+  ctx.fillStyle = '#fff'; ctx.globalAlpha = active ? 0.35 : 0.18;
+  ctx.beginPath(); ctx.arc(stickBase.cx, stickBase.cy, 3, 0, TAU); ctx.fill();
+  // knob — moves with stick direction, snaps back to center when released
+  ctx.globalAlpha = active ? 0.85 : 0.45;
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  const kx = stickBase.cx + stick.dx * stickBase.r;
+  const ky = stickBase.cy + stick.dy * stickBase.r;
+  ctx.beginPath(); ctx.arc(kx, ky, 18, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
