@@ -179,12 +179,24 @@ const WEAPONS = {
   orbit: { name:'Spirit Blades', ico:'🌀', max:6,
     desc: l => l===0 ? 'Blades orbit you, shredding what they touch.' :
       `Lv ${l+1}: ${orbitCount(l+1)} blades, +dmg.` },
+  petal: { name:'Petal Storm', ico:'🌸', max:6,
+    desc: l => l===0 ? 'A whirling burst of petal-shards bursts outward.' :
+      `Lv ${l+1}: ${petalStats(l+1).count} petals, +dmg.` },
+  crow: { name:'Death Crow', ico:'🐦', max:6,
+    desc: l => l===0 ? 'A crow dives on a distant foe — AoE on impact.' :
+      `Lv ${l+1}: ${crowStats(l+1).count} crows, +dmg.` },
+  lantern: { name:'Soul Lantern', ico:'🏮', max:6,
+    desc: l => l===0 ? 'Drop a lantern that burns nearby foes.' :
+      `Lv ${l+1}: +dmg, larger radius, longer burn.` },
 };
 function katStats(l){ return { dmg: 10 + l*5, cd: 900 - l*65, range: 88 + l*13, arc: Math.min(TAU, 2.4 + l*0.6) }; }
 function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*80, count: 1 + Math.floor(l/2), speed: 360 }; }
 function kiStats(l){ return { dmg: 12 + l*8, cd: 1700 - l*120, w: 30 + l*7, speed: 520, range: 360 }; }
 function orbitCount(l){ return 1 + Math.floor((l+1)/2); }
 function orbitStats(l){ return { dmg: 6 + l*4, count: orbitCount(l), radius: 64, speed: 2.4 }; }
+function petalStats(l){ return { dmg: 7 + l*4, cd: 1500 - l*110, count: 5 + l*2, speed: 220, range: 240 }; }
+function crowStats(l){ return { dmg: 32 + l*14, cd: 2500 - l*180, count: 1 + Math.floor((l-1)/2), aoe: 34 + l*4 }; }
+function lanternStats(l){ return { dmg: 4 + l*2, cd: 2200 - l*180, r: 48 + l*7, life: 3.6 + l*0.2 }; }
 
 const PASSIVES = {
   power:  { name:'Whetstone',    ico:'🔪', desc:'+15% all damage',        cap:6, apply:p=>p.power*=1.15 },
@@ -307,7 +319,7 @@ function killEnemy(e){
 // =====================================================================
 //  WEAPONS — fired from update()
 // =====================================================================
-const cd = { katana:0, shuriken:0, kiwave:0 };
+const cd = { katana:0, shuriken:0, kiwave:0, petal:0, crow:0, lantern:0 };
 let orbitT = 0, orbitNodes = [];
 function rebuildOrbit(){
   orbitNodes = [];
@@ -375,6 +387,43 @@ function fireWeapons(dt){
       }
     }
   }
+  // PETAL STORM — radial burst of piercing petal-shards
+  if (P.weapons.petal){
+    cd.petal -= dt;
+    const s = petalStats(P.weapons.petal);
+    if (cd.petal <= 0){
+      cd.petal = s.cd/1000 * hz;
+      for (let i=0;i<s.count;i++){
+        const a = i/s.count*TAU + rand(-0.08,0.08);
+        shots.push({ kind:'petal', x:P.x, y:P.y, vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:7, life:s.range/s.speed, pierce:2, rot:rand(0,TAU), vr:rand(-6,6) });
+      }
+    }
+  }
+  // DEATH CROW — dive from offscreen on distant foes, AoE on impact
+  if (P.weapons.crow){
+    cd.crow -= dt;
+    const s = crowStats(P.weapons.crow);
+    if (cd.crow <= 0 && enemies.length){
+      cd.crow = s.cd/1000 * hz;
+      const tgts = enemies.slice().sort((a,b)=>
+        Math.hypot(b.x-P.x,b.y-P.y) - Math.hypot(a.x-P.x,a.y-P.y)).slice(0,s.count);
+      for (const t of tgts){
+        shots.push({ kind:'crow', x:t.x, y:t.y-240, vx:0, vy:520,
+          dmg:s.dmg*P.power, r:s.aoe, life:1.0, targetY:t.y });
+      }
+    }
+  }
+  // SOUL LANTERN — drop stationary burning zone at player
+  if (P.weapons.lantern){
+    cd.lantern -= dt;
+    const s = lanternStats(P.weapons.lantern);
+    if (cd.lantern <= 0){
+      cd.lantern = s.cd/1000 * hz;
+      shots.push({ kind:'lantern', x:P.x, y:P.y, vx:0, vy:0,
+        dmg:s.dmg*P.power, r:s.r, life:s.life, tickT:0 });
+    }
+  }
 }
 let _eid = 1;
 function nearest(n){
@@ -436,8 +485,42 @@ function update(dt){
 
   // projectiles
   for (const s of shots){
-    s.x += s.vx*dt; s.y += s.vy*dt; s.life -= dt;
+    s.life -= dt;
+
+    // LANTERN — stationary, ticks damage to enemies in radius
+    if (s.kind==='lantern'){
+      s.tickT += dt;
+      if (s.tickT >= 0.35){
+        s.tickT = 0;
+        for (const e of enemies){
+          if (e.dead) continue;
+          if (Math.hypot(e.x-s.x, e.y-s.y) < s.r + e.r) damage(e, s.dmg, e.x-s.x, e.y-s.y);
+        }
+      }
+      continue;
+    }
+
+    s.x += s.vx*dt; s.y += s.vy*dt;
     if (s.kind==='shuriken') s.rot += dt*22;
+    if (s.kind==='petal') s.rot += s.vr*dt;
+
+    // CROW — falls straight down to targetY, then explodes
+    if (s.kind==='crow'){
+      if (s.y >= s.targetY){
+        shake = Math.max(shake, 5);
+        for (const e of enemies){
+          if (e.dead) continue;
+          if (Math.hypot(e.x-s.x, e.y-s.y) < s.r + e.r) damage(e, s.dmg, e.x-s.x, e.y-s.y);
+        }
+        for (let i=0;i<10;i++){
+          const a=rand(0,TAU), sp=rand(80,170);
+          fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#1a1424' });
+        }
+        s.life = 0;
+      }
+      continue;
+    }
+
     for (const e of enemies){
       if (e.dead) continue;
       if (s.kind==='ki'){ if (s.hit.has(e._id)) continue; }
@@ -655,6 +738,47 @@ function drawShot(s){
     ctx.rotate(s.rot); ctx.fillStyle='#dfe4ee'; ctx.shadowColor='#fff'; ctx.shadowBlur=4;
     for (let i=0;i<4;i++){ ctx.rotate(Math.PI/2); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(7,-2); ctx.lineTo(9,0); ctx.lineTo(7,2); ctx.closePath(); ctx.fill(); }
     ctx.fillStyle='#16161c'; ctx.beginPath(); ctx.arc(0,0,2,0,TAU); ctx.fill();
+  } else if (s.kind==='petal'){
+    ctx.rotate(s.rot);
+    ctx.shadowColor='#ff8aa8'; ctx.shadowBlur=8;
+    ctx.fillStyle='rgba(255,182,200,0.95)';
+    ctx.beginPath(); ctx.ellipse(0,0,8,4,0,0,TAU); ctx.fill();
+    ctx.fillStyle='rgba(216,54,82,0.7)';
+    ctx.beginPath(); ctx.ellipse(0,0,3,1.4,0,0,TAU); ctx.fill();
+  } else if (s.kind==='crow'){
+    // ground shadow at impact point grows as crow descends
+    const dy = s.targetY - s.y;
+    if (dy > 0){
+      ctx.save();
+      ctx.translate(0, dy);
+      const k = Math.max(0.3, 1 - dy/240);
+      ctx.globalAlpha = 0.45 * k;
+      ctx.fillStyle = '#000';
+      ctx.beginPath(); ctx.ellipse(0,0, 14*k, 5*k, 0, 0, TAU); ctx.fill();
+      ctx.restore();
+    }
+    // diving crow silhouette
+    ctx.fillStyle='#0c0814';
+    ctx.beginPath();
+    ctx.moveTo(0,-10); ctx.lineTo(9,-2); ctx.lineTo(15,5); ctx.lineTo(0,9); ctx.lineTo(-15,5); ctx.lineTo(-9,-2); ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle='#e7b53b'; ctx.shadowColor='#e7b53b'; ctx.shadowBlur=6;
+    ctx.beginPath(); ctx.arc(-2,-3,1.2,0,TAU); ctx.arc(2,-3,1.2,0,TAU); ctx.fill();
+  } else if (s.kind==='lantern'){
+    const pulse = 1 + Math.sin(game.t*5 + s.x)*0.12;
+    const fade = Math.min(1, s.life/0.6);
+    // burning aura
+    ctx.globalAlpha = fade;
+    ctx.shadowColor='#ff6a3d'; ctx.shadowBlur=20*pulse;
+    ctx.fillStyle='rgba(255,138,80,0.16)';
+    ctx.beginPath(); ctx.arc(0,0,s.r*pulse,0,TAU); ctx.fill();
+    ctx.shadowBlur=0;
+    // lantern body
+    ctx.fillStyle='#5a1a15'; ctx.fillRect(-7,-9,14,18);
+    ctx.fillStyle='#ffb347'; ctx.fillRect(-5,-7,10,14);
+    ctx.fillStyle='#0c0814'; ctx.fillRect(-8,-11,16,3); ctx.fillRect(-8,9,16,3);
+    ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(5,-4); ctx.moveTo(-5,0); ctx.lineTo(5,0); ctx.moveTo(-5,4); ctx.lineTo(5,4); ctx.stroke();
   } else { // ki crescent
     ctx.rotate(s.ang); ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=14;
     ctx.fillStyle='rgba(79,214,224,0.55)';
