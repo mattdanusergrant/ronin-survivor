@@ -72,6 +72,21 @@
   #pausebtn{position:absolute; top:8px; right:10px; z-index:15; pointer-events:auto; cursor:pointer;
     width:34px; height:34px; border-radius:8px; border:1px solid var(--line); background:rgba(20,20,26,.8);
     color:var(--dim); font-size:15px; display:flex; align-items:center; justify-content:center;}
+
+  /* options menu */
+  .opts{display:flex; flex-direction:column; gap:10px; width:100%; max-width:380px; margin:4px 0;}
+  .opt{pointer-events:auto; display:flex; justify-content:space-between; align-items:center;
+    background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:12px 14px;
+    font-size:14px; color:var(--bone); cursor:pointer; user-select:none;}
+  .opt .sw{width:42px; height:24px; border-radius:14px; background:#2a2a32; position:relative;
+    transition:background .15s;}
+  .opt .sw::after{content:''; position:absolute; top:2px; left:2px; width:20px; height:20px;
+    border-radius:50%; background:#cfd3da; transition:left .15s;}
+  .opt.on .sw{background:var(--blood);}
+  .opt.on .sw::after{left:20px;}
+  .linklike{pointer-events:auto; cursor:pointer; font-size:13px; color:var(--dim);
+    letter-spacing:2px; text-transform:uppercase; padding:6px 12px;}
+  .linklike:hover{color:var(--bone);}
 </style>
 </head>
 <body>
@@ -96,6 +111,7 @@
       Your blade swings on its own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
       Don't get touched. Last as long as you can.
     </div>
+    <div class="linklike" id="opt-from-title">Options</div>
   </div>
 
   <!-- Level up -->
@@ -109,7 +125,18 @@
   <div id="paused" class="overlay hidden">
     <h1 style="font-size:26px">PAUSED</h1>
     <div class="btn" id="resumebtn">Resume</div>
+    <div class="linklike" id="opt-from-paused">Options</div>
     <div class="btn" id="quitbtn" style="border-color:var(--line); background:#16161c">Abandon Run</div>
+  </div>
+
+  <!-- Options -->
+  <div id="options" class="overlay hidden">
+    <div class="tag">Options</div>
+    <h1 style="font-size:24px">SETTINGS</h1>
+    <div class="opts">
+      <div class="opt" id="opt-joystick"><span>Show on-screen joystick</span><span class="sw"></span></div>
+    </div>
+    <div class="btn" id="opt-back">Back</div>
   </div>
 
   <!-- Game over -->
@@ -134,7 +161,7 @@ const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 500;  // target visible world width; smaller screens zoom out
-const stickBase = { cx:90, cy:0, r:56 };  // fixed visible joystick base (cy set in resize)
+const stickBase = { cx:56, cy:0, r:38 };  // fixed visible joystick base (cy set in resize)
 
 function resize(){
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -144,7 +171,7 @@ function resize(){
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   // zoom out on narrow screens so visible world is at least DESIGN_W wide
   viewScale = Math.min(1, W / DESIGN_W);
-  stickBase.cy = H - 110;  // park the joystick base above the bottom edge / home-bar
+  stickBase.cy = H - 72;  // park the joystick base above the bottom edge / home-bar
 }
 window.addEventListener('resize', resize); resize();
 
@@ -159,6 +186,17 @@ function angDiff(a, b){ let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d 
 const D = id => document.getElementById(id);
 const elHud = D('hud'), elPauseBtn = D('pausebtn');
 const elTitle = D('title'), elLevelup = D('levelup'), elPaused = D('paused'), elOver = D('over');
+const elOptions = D('options');
+
+// ---------- persisted settings ----------
+const SETTINGS_KEY = 'ronin-settings-v1';
+const SETTINGS = (function(){
+  const defaults = { joystick: true };
+  try { return Object.assign(defaults, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
+  catch { return defaults; }
+})();
+function saveSettings(){ try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch {} }
+let optionsReturnTo = null;  // remember which overlay to restore on Back
 const elCards = D('cards');
 
 // =====================================================================
@@ -841,7 +879,7 @@ function draw(){
   ctx.restore();
 
   // joystick — fixed base visible during play, knob reflects current direction
-  if (game.state === STATE.PLAY) drawStick();
+  if (game.state === STATE.PLAY && SETTINGS.joystick) drawStick();
 }
 
 function drawGround(camX, camY, VW, VH){
@@ -1105,7 +1143,7 @@ function drawStick(){
   ctx.fillStyle = 'rgba(255,255,255,0.7)';
   const kx = stickBase.cx + stick.dx * stickBase.r;
   const ky = stickBase.cy + stick.dy * stickBase.r;
-  ctx.beginPath(); ctx.arc(kx, ky, 18, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(kx, ky, 12, 0, TAU); ctx.fill();
   ctx.restore();
 }
 
@@ -1127,7 +1165,7 @@ function updateHud(){
 //  FLOW
 // =====================================================================
 function showOnly(el){
-  for (const o of [elTitle, elLevelup, elPaused, elOver]) o.classList.add('hidden');
+  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
 }
 function togglePause(){
@@ -1182,6 +1220,24 @@ D('againbtn').onclick = ()=>{ newGame(); };
 D('resumebtn').onclick = togglePause;
 D('quitbtn').onclick = ()=>{ game=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 elPauseBtn.onclick = togglePause;
+
+// ---------- options menu ----------
+function refreshOptionsUI(){
+  D('opt-joystick').classList.toggle('on', !!SETTINGS.joystick);
+}
+function openOptions(from){
+  optionsReturnTo = from;
+  refreshOptionsUI();
+  showOnly(elOptions);
+}
+D('opt-from-title').onclick = ()=> openOptions(elTitle);
+D('opt-from-paused').onclick = ()=> openOptions(elPaused);
+D('opt-back').onclick = ()=> showOnly(optionsReturnTo || elTitle);
+D('opt-joystick').onclick = ()=>{
+  SETTINGS.joystick = !SETTINGS.joystick;
+  saveSettings();
+  refreshOptionsUI();
+};
 </script>
 </body>
 </html>
