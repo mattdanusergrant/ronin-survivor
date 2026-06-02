@@ -49,6 +49,9 @@
     color:var(--bone); font-size:17px; font-weight:700; letter-spacing:2px; padding:14px 34px;
     border-radius:10px; text-transform:uppercase; transition:transform .08s, background .15s;}
   .btn:active{transform:scale(.96); background:#2a1311;}
+  .btn-sec{border-color:var(--line); background:#16161c; color:var(--dim);
+    font-size:14px; padding:11px 26px; letter-spacing:2px;}
+  .btn-sec:active{background:#1d1d24;}
   .help{font-size:12px; color:var(--dim); max-width:420px; line-height:1.6;}
   .help b{color:var(--ink);}
 
@@ -84,9 +87,6 @@
     border-radius:50%; background:#cfd3da; transition:left .15s;}
   .opt.on .sw{background:var(--blood);}
   .opt.on .sw::after{left:20px;}
-  .linklike{pointer-events:auto; cursor:pointer; font-size:13px; color:var(--dim);
-    letter-spacing:2px; text-transform:uppercase; padding:6px 12px;}
-  .linklike:hover{color:var(--bone);}
 </style>
 </head>
 <body>
@@ -102,7 +102,6 @@
 
   <!-- Title -->
   <div id="title" class="overlay">
-    <div class="tag">Horde Survival</div>
     <h1>RONIN <span class="acc">SURVIVOR</span></h1>
     <div class="lede">A lone swordsman walks the road to <b style="color:var(--gold)">No.1</b>. The world wants the headband off his head. Stand your ground, sharpen your blade, and cut down everything that comes.</div>
     <div class="btn" id="startbtn">Draw Sword</div>
@@ -111,7 +110,7 @@
       Your blade swings on its own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
       Don't get touched. Last as long as you can.
     </div>
-    <div class="linklike" id="opt-from-title">Options</div>
+    <div class="btn btn-sec" id="opt-from-title">Options</div>
   </div>
 
   <!-- Level up -->
@@ -125,7 +124,7 @@
   <div id="paused" class="overlay hidden">
     <h1 style="font-size:26px">PAUSED</h1>
     <div class="btn" id="resumebtn">Resume</div>
-    <div class="linklike" id="opt-from-paused">Options</div>
+    <div class="btn btn-sec" id="opt-from-paused">Options</div>
     <div class="btn" id="quitbtn" style="border-color:var(--line); background:#16161c">Abandon Run</div>
   </div>
 
@@ -191,7 +190,7 @@ const elOptions = D('options');
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
 const SETTINGS = (function(){
-  const defaults = { joystick: true };
+  const defaults = { joystick: false };
   try { return Object.assign(defaults, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
   catch { return defaults; }
 })();
