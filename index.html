@@ -170,9 +170,9 @@ const STATE = { TITLE:0, PLAY:1, LEVELUP:2, PAUSED:3, OVER:4 };
 // ---------- weapon & passive definitions ----------
 // Weapons: owned ones run on a cooldown and deal damage. Levels improve them.
 const WEAPONS = {
-  katana: { name:'Katana Sweep', ico:'⚔️', max:6,
-    desc: l => l===0 ? 'A wide arc cut around you.' :
-      `Lv ${l+1}: dmg ${katStats(l+1).dmg}, arc wider, faster.` },
+  katana: { name:'Katana Slash', ico:'⚔️', max:6,
+    desc: l => l===0 ? 'A quick forward slash — only swings when foes are in reach, then keeps slashing.' :
+      `Lv ${l+1}: +dmg, faster, wider arc, longer reach.` },
   shuriken: { name:'Throwing Stars', ico:'✴️', max:6,
     desc: l => l===0 ? 'Hurl stars at the nearest foes.' :
       `Lv ${l+1}: ${shurStats(l+1).count} stars, +dmg.` },
@@ -195,7 +195,7 @@ const WEAPONS = {
     desc: l => l===0 ? 'Spawns a glowing spot near you — step in it to detonate.' :
       theOrbDesc(l+1) },
 };
-function katStats(l){ return { dmg: 10 + l*5, cd: 900 - l*65, range: 88 + l*13, arc: Math.min(TAU, 2.4 + l*0.6) }; }
+function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*38, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
 function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*80, count: 1 + Math.floor(l/2), speed: 360 }; }
 function kiStats(l){ return { dmg: 12 + l*8, cd: 1700 - l*120, w: 30 + l*7, speed: 520, range: 360 }; }
 function orbitCount(l){ return 1 + Math.floor((l+1)/2); }
@@ -350,18 +350,33 @@ function rebuildOrbit(){
 
 function fireWeapons(dt){
   const P = player, hz = P.haste;
-  // KATANA — periodic arc around facing
+  // KATANA — quick forward slash; only swings when a foe is in reach
   if (P.weapons.katana){
-    cd.katana -= dt;
+    if (cd.katana > 0) cd.katana -= dt;
     const s = katStats(P.weapons.katana);
     if (cd.katana <= 0){
-      cd.katana = s.cd/1000 * hz;
-      const dmg = s.dmg * P.power;
-      blades.push({ kind:'arc', ang:lastAng, range:s.range, arc:s.arc, t:0, life:.22, side:1 });
-      // a sweep around you — hits every foe within reach
+      // find nearest in-range enemy
+      let target = null, bestD = Infinity;
       for (const e of enemies){
-        if (Math.hypot(e.x-P.x, e.y-P.y) < s.range + e.r)
-          damage(e, dmg, e.x-P.x, e.y-P.y);
+        if (e.dead) continue;
+        const d = Math.hypot(e.x-P.x, e.y-P.y);
+        if (d < s.range + e.r && d < bestD){ bestD = d; target = e; }
+      }
+      if (target){
+        cd.katana = s.cd/1000 * hz;
+        const ang = Math.atan2(target.y-P.y, target.x-P.x);
+        lastAng = ang;
+        const dmg = s.dmg * P.power, halfArc = s.arc/2;
+        blades.push({ kind:'arc', ang, range:s.range, arc:s.arc, t:0, life:.16, side:1 });
+        for (const e of enemies){
+          if (e.dead) continue;
+          const dx = e.x-P.x, dy = e.y-P.y, d = Math.hypot(dx,dy);
+          if (d >= s.range + e.r) continue;
+          let da = Math.atan2(dy, dx) - ang;
+          while (da > Math.PI) da -= TAU;
+          while (da < -Math.PI) da += TAU;
+          if (Math.abs(da) <= halfArc) damage(e, dmg, dx, dy);
+        }
       }
     }
   }
