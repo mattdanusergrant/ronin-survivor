@@ -132,7 +132,8 @@
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
-let W = 0, H = 0, DPR = 1;
+let W = 0, H = 0, DPR = 1, viewScale = 1;
+const DESIGN_W = 500;  // target visible world width; smaller screens zoom out
 
 function resize(){
   DPR = Math.min(window.devicePixelRatio || 1, 2);
@@ -140,6 +141,8 @@ function resize(){
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
   cv.width = Math.floor(W * DPR); cv.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  // zoom out on narrow screens so visible world is at least DESIGN_W wide
+  viewScale = Math.min(1, W / DESIGN_W);
 }
 window.addEventListener('resize', resize); resize();
 
@@ -233,7 +236,8 @@ function newGame(){
     inv:0, hurt:0, weapons:{ katana:1 }, passives:{}, walkPhase:0, moving:false,
   };
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
-  for (let i=0;i<26;i++) petals.push({ x:rand(-W,W*2), y:rand(-H,H*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
+  const VW = W/viewScale, VH = H/viewScale;
+  for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
@@ -289,7 +293,7 @@ function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
 function spawnInterval(){ return Math.max(0.18, 1.05 - game.t * 0.0065); }
 
 function spawnEnemy(boss=false){
-  const ang = rand(0, TAU), dist = Math.max(W,H) * 0.62 + 40;
+  const ang = rand(0, TAU), dist = Math.max(W,H)/viewScale * 0.62 + 40;
   const x = game.cam.x + Math.cos(ang) * dist, y = game.cam.y + Math.sin(ang) * dist;
   if (boss){
     enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
@@ -705,7 +709,7 @@ function update(dt){
   // petals drift
   for (const pt of petals){
     pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.rot += pt.vr*dt;
-    const ml = Math.max(W,H);
+    const ml = Math.max(W,H)/viewScale;
     if (pt.y - game.cam.y > ml){ pt.y = game.cam.y - ml; pt.x = game.cam.x + rand(-ml,ml); }
     if (pt.x - game.cam.x < -ml){ pt.x = game.cam.x + ml; }
   }
@@ -784,10 +788,15 @@ function draw(){
 
   if (!game){ ctx.restore(); return; }
 
-  const camX = game.cam.x - W/2 + sx, camY = game.cam.y - H/2 + sy;
-  ctx.translate(-camX, -camY);
+  // center on screen, apply zoom-out, then place camera in world space
+  ctx.translate(W/2 + sx, H/2 + sy);
+  ctx.scale(viewScale, viewScale);
+  ctx.translate(-game.cam.x, -game.cam.y);
 
-  drawGround(camX, camY);
+  const VW = W/viewScale, VH = H/viewScale;
+  const camX = game.cam.x - VW/2, camY = game.cam.y - VH/2;
+
+  drawGround(camX, camY, VW, VH);
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
 
@@ -818,19 +827,19 @@ function draw(){
   if (stick.on) drawStick();
 }
 
-function drawGround(camX, camY){
+function drawGround(camX, camY, VW, VH){
   const g = 64;
-  ctx.strokeStyle = 'rgba(255,255,255,0.025)'; ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)'; ctx.lineWidth = 1/viewScale;
   const x0 = Math.floor(camX/g)*g, y0 = Math.floor(camY/g)*g;
   ctx.beginPath();
-  for (let x=x0; x<camX+W+g; x+=g){ ctx.moveTo(x,camY); ctx.lineTo(x,camY+H); }
-  for (let y=y0; y<camY+H+g; y+=g){ ctx.moveTo(camX,y); ctx.lineTo(camX+W,y); }
+  for (let x=x0; x<camX+VW+g; x+=g){ ctx.moveTo(x,camY); ctx.lineTo(x,camY+VH); }
+  for (let y=y0; y<camY+VH+g; y+=g){ ctx.moveTo(camX,y); ctx.lineTo(camX+VW,y); }
   ctx.stroke();
   // faint red sun vignette toward center
   const cx=game.cam.x, cy=game.cam.y;
-  const grd = ctx.createRadialGradient(cx,cy,40, cx,cy, Math.max(W,H)*0.7);
+  const grd = ctx.createRadialGradient(cx,cy,40, cx,cy, Math.max(VW,VH)*0.7);
   grd.addColorStop(0,'rgba(216,54,43,0.05)'); grd.addColorStop(1,'rgba(0,0,0,0)');
-  ctx.fillStyle = grd; ctx.fillRect(camX,camY,W,H);
+  ctx.fillStyle = grd; ctx.fillRect(camX,camY,VW,VH);
 }
 
 function drawPetal(pt){
