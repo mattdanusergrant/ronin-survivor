@@ -323,10 +323,11 @@ function inputVec(){
 //  ENEMIES
 // =====================================================================
 const ENEMY_TYPES = {
-  footpad: { hp:14,  speed:48, r:11, dmg:8,  xp:1, color:'#3a3f4d', tier:0 },
-  ronin:   { hp:40,  speed:42, r:13, dmg:12, xp:2, color:'#5a3530', tier:1 },
-  ninja:   { hp:26,  speed:82, r:10, dmg:10, xp:2, color:'#23252e', tier:2 },
-  brute:   { hp:120, speed:30, r:18, dmg:18, xp:5, color:'#4a2a44', tier:3 },
+  // sight = perception radius; callR = how loudly they call allies; aggro = start in chase
+  footpad: { hp:14,  speed:48, r:11, dmg:8,  xp:1, color:'#3a3f4d', tier:0, sight:150, callR:220, aggro:false },
+  ronin:   { hp:40,  speed:42, r:13, dmg:12, xp:2, color:'#5a3530', tier:1, sight:220, callR:160, aggro:false },
+  ninja:   { hp:26,  speed:82, r:10, dmg:10, xp:2, color:'#23252e', tier:2, sight:280, callR: 90, aggro:false },
+  brute:   { hp:120, speed:30, r:18, dmg:18, xp:5, color:'#4a2a44', tier:3, sight:170, callR:130, aggro:true  },
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
 function spawnInterval(){ return Math.max(0.18, 1.05 - game.t * 0.0065); }
@@ -336,7 +337,8 @@ function spawnEnemy(boss=false){
   const x = game.cam.x + Math.cos(ang) * dist, y = game.cam.y + Math.sin(ang) * dist;
   if (boss){
     enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
-      xp:60, color:'#7a1f1a', boss:true, hit:0, sep:0 });
+      xp:60, color:'#7a1f1a', boss:true, hit:0, sep:0, state:'chase',
+      sight:9999, callR:0, alertT:0, chargeT:0, chargeCheckT:0, wDir:0, wTimer:0, wSpeed:0 });
     fx.push({ kind:'warn', t:0, life:1.4 }); return;
   }
   // weight the roster by elapsed time
@@ -346,7 +348,11 @@ function spawnEnemy(boss=false){
   if (game.t > 130) roster.push('ronin','brute','ninja');
   const t = ENEMY_TYPES[pick(roster)];
   enemies.push({ x, y, r:t.r, hp:t.hp*timeMul(), maxhp:t.hp*timeMul(), speed:t.speed*rand(.85,1.12),
-    dmg:t.dmg, xp:t.xp, color:t.color, hit:0, boss:false, sep:0 });
+    dmg:t.dmg, xp:t.xp, color:t.color, hit:0, boss:false, sep:0,
+    state: t.aggro ? 'chase' : 'wander',
+    sight:t.sight, callR:t.callR,
+    wDir:rand(0,TAU), wTimer:rand(1.2,3.2), wSpeed:rand(0.35,0.55),
+    alertT:0, chargeT:0, chargeCheckT:rand(0,0.6) });
 }
 
 // =====================================================================
@@ -634,13 +640,58 @@ function update(dt){
   game.bossT += dt;
   if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
 
-  // enemies move toward player + separation + contact
+  // enemies — state machine (wander → alert → chase) + group charge + contact
   for (const e of enemies){
     if (!e._id){ e._id = _eid++; }
     if (e.hit>0) e.hit -= dt;
-    const dx=P.x-e.x, dy=P.y-e.y, d=Math.hypot(dx,dy)||1;
-    e.x += dx/d * e.speed * dt;
-    e.y += dy/d * e.speed * dt;
+
+    const dx = P.x-e.x, dy = P.y-e.y, d = Math.hypot(dx,dy) || 1;
+
+    // perception: wandering enemy spots player within sight radius
+    if (e.state === 'wander' && d < e.sight) e.state = 'alert', e.alertT = rand(0.3, 0.5);
+
+    if (e.state === 'wander'){
+      e.wTimer -= dt;
+      if (e.wTimer <= 0){
+        e.wDir = rand(0, TAU);
+        e.wTimer = rand(1.2, 3.2);
+        e.wSpeed = Math.random() < 0.2 ? 0 : rand(0.35, 0.55);
+      }
+      e.x += Math.cos(e.wDir) * e.speed * e.wSpeed * dt;
+      e.y += Math.sin(e.wDir) * e.speed * e.wSpeed * dt;
+    } else if (e.state === 'alert'){
+      e.alertT -= dt;
+      if (e.alertT <= 0){
+        e.state = 'chase';
+        // call nearby allies (one-shot — only wanderers respond)
+        const cr2 = e.callR * e.callR;
+        for (const a of enemies){
+          if (a === e || a.boss || a.state !== 'wander') continue;
+          const ax = a.x-e.x, ay = a.y-e.y;
+          if (ax*ax + ay*ay < cr2){ a.state = 'alert'; a.alertT = rand(0.25, 0.45); }
+        }
+      }
+    } else {
+      // chase — straight at player; group-charge boost when clustered with allies
+      const sp = e.speed * (e.chargeT > 0 ? 1.45 : 1);
+      e.x += dx/d * sp * dt;
+      e.y += dy/d * sp * dt;
+      if (e.chargeT > 0) e.chargeT -= dt;
+      else if (!e.boss){
+        e.chargeCheckT -= dt;
+        if (e.chargeCheckT <= 0){
+          e.chargeCheckT = rand(0.7, 1.2);
+          let near = 0;
+          for (const a of enemies){
+            if (a === e || a.state !== 'chase' || a.boss) continue;
+            const ax = a.x-e.x, ay = a.y-e.y;
+            if (ax*ax + ay*ay < 80*80){ if (++near >= 3) break; }
+          }
+          if (near >= 3) e.chargeT = rand(1.4, 2.2);
+        }
+      }
+    }
+
     if (d < e.r + P.r && P.inv<=0){
       P.hp -= e.dmg; P.inv = 0.7; P.hurt = 0.25; shake = Math.max(shake, 6);
       if (P.hp <= 0){ P.hp = 0; gameOver(false); return; }
@@ -725,7 +776,14 @@ function update(dt){
     if (d < P.r + 6){ o.got=true; gainXP(o.xp); }
   }
   orbs = orbs.filter(o=>!o.got);
-  enemies = enemies.filter(e=>!e.dead);
+  // drop dead enemies and cull strays that wandered too far from the player
+  const cullR2 = 1100 * 1100;
+  enemies = enemies.filter(e => {
+    if (e.dead) return false;
+    if (e.boss) return true;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    return dx*dx + dy*dy < cullR2;
+  });
 
   // fx
   for (const f of fx){
@@ -916,16 +974,31 @@ function drawOrb(o){
 function drawEnemy(e){
   ctx.save(); ctx.translate(e.x,e.y);
   const flash = e.hit>0;
+  const charging = e.chargeT > 0;
+  // charge halo behind body
+  if (charging){
+    ctx.shadowColor = '#e7b53b'; ctx.shadowBlur = 14;
+    ctx.fillStyle = 'rgba(231,181,59,0.18)';
+    ctx.beginPath(); ctx.arc(0, 0, e.r*1.6, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
   // body
-  ctx.fillStyle = flash ? '#ffffff' : e.color;
+  ctx.fillStyle = flash ? '#ffffff' : (charging ? '#7a5a26' : e.color);
   ctx.beginPath(); ctx.arc(0,2,e.r,0,TAU); ctx.fill();
   // head
   ctx.beginPath(); ctx.arc(0,-e.r*0.7, e.r*0.55, 0, TAU); ctx.fill();
-  // eyes (red glow)
+  // eyes (red glow; gold while charging)
   if (!flash){
-    ctx.fillStyle = e.boss ? '#ffd24a' : '#e3342f';
+    ctx.fillStyle = e.boss ? '#ffd24a' : (charging ? '#ffd24a' : '#e3342f');
     ctx.beginPath(); ctx.arc(-e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU);
     ctx.arc(e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU); ctx.fill();
+  }
+  // alert indicator
+  if (e.state === 'alert'){
+    ctx.fillStyle = '#e7b53b';
+    ctx.font = 'bold 16px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('!', 0, -e.r*2.2);
   }
   // boss healthbar
   if (e.boss){
