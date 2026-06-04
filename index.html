@@ -265,6 +265,18 @@ const WEAPONS = {
   wraith: { name:'Spirit Wraith', ico:'👻', max:6,
     desc: l => l===0 ? 'A spirit-bomb that homes onto a foe and detonates.' :
       `Lv ${l+1}: +dmg, larger blast, faster summons.` },
+  crush: { name:'Iron Crusher', ico:'🔨', max:6,
+    desc: l => l===0 ? 'A heavy two-handed swing — wide arc, big hit, knocks foes back.' :
+      `Lv ${l+1}: +dmg, wider arc, stronger knockback.` },
+  spear: { name:'Bone Spear', ico:'🦴', max:6,
+    desc: l => l===0 ? 'A fast piercing spear flies toward the nearest foe.' :
+      `Lv ${l+1}: +dmg, faster throws.` },
+  rico: { name:'Ricochet Shuriken', ico:'🪃', max:6,
+    desc: l => l===0 ? 'A spinning star that ricochets between nearby foes.' :
+      `Lv ${l+1}: ${ricoStats(l+1).bounces+1} hits, +dmg.` },
+  arrow: { name:'Tracking Arrow', ico:'🏹', max:6,
+    desc: l => l===0 ? 'A fast arrow that homes onto a single foe.' :
+      `Lv ${l+1}: +dmg, faster volleys, sharper homing.` },
 };
 function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*35, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
 function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*70, count: 1 + Math.floor(l/2), speed: 360 }; }
@@ -279,6 +291,10 @@ function kunaiStats(l){ return { dmg: 7 + l*3, cd: 550 - l*50, speed: 480, pierc
 function thunderStats(l){ return { dmg: 10 + l*5, cd: 1300 - l*100, jumps: Math.floor((l+1)/2), jumpR: 100 + l*15 }; }
 function bloomStats(l){ return { dmg: 10 + l*5, cd: 1700 - l*120, r: 65 + l*12 }; }
 function wraithStats(l){ return { dmg: 16 + l*8, cd: 1700 - l*100, aoe: 22 + l*3, speed: 250, turn: 3.5 }; }
+function crushStats(l){ return { dmg: 22 + l*10, cd: 900 - l*45, range: 86 + l*9, arc: 1.9 + l*0.08, knockback: 18 + l*2 }; }
+function spearStats(l){ return { dmg: 8 + l*4, cd: 600 - l*40, speed: 800, range: 400, w: 5 }; }
+function ricoStats(l){ return { dmg: 10 + l*4, cd: 1200 - l*80, bounces: 1 + Math.floor(l/2), speed: 380, bounceR: 130 }; }
+function arrowStats(l){ return { dmg: 12 + l*5, cd: 700 - l*50, speed: 420, turn: 6.0 }; }
 
 const PASSIVES = {
   power:  { name:'Whetstone',    ico:'🔪', desc:'+15% all damage',        cap:6, apply:p=>p.power*=1.15 },
@@ -418,7 +434,8 @@ function killEnemy(e){
 //  WEAPONS — fired from update()
 // =====================================================================
 const cd = { katana:0, shuriken:0, kiwave:0, petal:0, lantern:0,
-              iron:0, trail:0, kunai:0, thunder:0, bloom:0, wraith:0 };
+              iron:0, trail:0, kunai:0, thunder:0, bloom:0, wraith:0,
+              crush:0, spear:0, rico:0, arrow:0 };
 let orbitT = 0, orbitNodes = [];
 function rebuildOrbit(){
   orbitNodes = [];
@@ -621,6 +638,84 @@ function fireWeapons(dt){
       }
     }
   }
+  // IRON CRUSHER — heavy targeted swing, only fires when foe in reach
+  if (P.weapons.crush){
+    if (cd.crush > 0) cd.crush -= dt;
+    const s = crushStats(P.weapons.crush);
+    if (cd.crush <= 0){
+      let target = null, bestD = Infinity;
+      for (const e of enemies){
+        if (e.dead) continue;
+        const d = Math.hypot(e.x-P.x, e.y-P.y);
+        if (d < s.range + e.r && d < bestD){ bestD = d; target = e; }
+      }
+      if (target){
+        cd.crush = s.cd/1000 * hz;
+        const ang = Math.atan2(target.y-P.y, target.x-P.x);
+        lastAng = ang;
+        const dmg = s.dmg * P.power, halfArc = s.arc/2;
+        blades.push({ kind:'arc', ang, range:s.range, arc:s.arc, t:0, life:.22, side:1, color:'#ffe79b', glow:'#ffaa3d', lwScale:1.4 });
+        shake = Math.max(shake, 6);
+        for (const e of enemies){
+          if (e.dead) continue;
+          const dx = e.x-P.x, dy = e.y-P.y, d = Math.hypot(dx,dy);
+          if (d >= s.range + e.r) continue;
+          let da = Math.atan2(dy, dx) - ang;
+          while (da > Math.PI) da -= TAU;
+          while (da < -Math.PI) da += TAU;
+          if (Math.abs(da) <= halfArc){
+            damage(e, dmg, dx, dy);
+            // extra knockback beyond damage()'s small push
+            const len = Math.hypot(dx, dy) || 1;
+            e.x += dx/len * s.knockback;
+            e.y += dy/len * s.knockback;
+          }
+        }
+      }
+    }
+  }
+  // BONE SPEAR — fast piercing thrust at nearest
+  if (P.weapons.spear){
+    cd.spear -= dt;
+    const s = spearStats(P.weapons.spear);
+    if (cd.spear <= 0){
+      const t = nearest(1)[0];
+      if (t){
+        cd.spear = s.cd/1000 * hz;
+        const a = Math.atan2(t.y-P.y, t.x-P.x);
+        shots.push({ kind:'spear', x:P.x, y:P.y, vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:s.w, life:s.range/s.speed, hit:new Set(), ang:a });
+      }
+    }
+  }
+  // RICOCHET SHURIKEN — physical projectile that bounces between nearby foes
+  if (P.weapons.rico){
+    cd.rico -= dt;
+    const s = ricoStats(P.weapons.rico);
+    if (cd.rico <= 0){
+      const t = nearest(1)[0];
+      if (t){
+        cd.rico = s.cd/1000 * hz;
+        const a = Math.atan2(t.y-P.y, t.x-P.x);
+        shots.push({ kind:'rico', x:P.x, y:P.y, vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:7, life:3.0, rot:0, bouncesLeft:s.bounces, bounceR:s.bounceR, speed:s.speed, hit:new Set() });
+      }
+    }
+  }
+  // TRACKING ARROW — fast homing single-target precision shot
+  if (P.weapons.arrow){
+    cd.arrow -= dt;
+    const s = arrowStats(P.weapons.arrow);
+    if (cd.arrow <= 0){
+      const t = nearest(1)[0];
+      if (t){
+        cd.arrow = s.cd/1000 * hz;
+        const a = Math.atan2(t.y-P.y, t.x-P.x);
+        shots.push({ kind:'arrow', x:P.x, y:P.y, vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:5, life:2.4, speed:s.speed, turn:s.turn });
+      }
+    }
+  }
 }
 let _eid = 1;
 function nearest(n){
@@ -796,17 +891,90 @@ function update(dt){
       continue;
     }
 
+    // TRACKING ARROW — fast homing, single-target, dies on first hit
+    if (s.kind==='arrow'){
+      let tgt = null, bestD2 = Infinity;
+      for (const e of enemies){
+        if (e.dead) continue;
+        const dx = e.x-s.x, dy = e.y-s.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bestD2){ bestD2 = d2; tgt = e; }
+      }
+      if (tgt){
+        const want = Math.atan2(tgt.y-s.y, tgt.x-s.x);
+        const curA = Math.atan2(s.vy, s.vx);
+        let diff = want - curA;
+        while (diff > Math.PI) diff -= TAU;
+        while (diff < -Math.PI) diff += TAU;
+        const maxTurn = s.turn * dt;
+        const turn = Math.max(-maxTurn, Math.min(maxTurn, diff));
+        const newA = curA + turn;
+        s.vx = Math.cos(newA) * s.speed;
+        s.vy = Math.sin(newA) * s.speed;
+      }
+      s.x += s.vx*dt; s.y += s.vy*dt;
+      for (const e of enemies){
+        if (e.dead) continue;
+        if (Math.hypot(e.x-s.x, e.y-s.y) < e.r + s.r){
+          damage(e, s.dmg, s.vx, s.vy);
+          s.life = 0;
+          break;
+        }
+      }
+      continue;
+    }
+
+    // RICOCHET SHURIKEN — flies, hits, redirects toward next nearest unhit
+    if (s.kind==='rico'){
+      s.x += s.vx*dt; s.y += s.vy*dt;
+      s.rot += dt*20;
+      for (const e of enemies){
+        if (e.dead || s.hit.has(e._id)) continue;
+        if (Math.hypot(e.x-s.x, e.y-s.y) < e.r + s.r){
+          damage(e, s.dmg, s.vx, s.vy);
+          s.hit.add(e._id);
+          if (s.bouncesLeft > 0){
+            // find nearest unhit foe within bounceR for the next hop
+            let next = null, bestD2 = s.bounceR * s.bounceR;
+            for (const o of enemies){
+              if (o.dead || s.hit.has(o._id)) continue;
+              const dx = o.x-s.x, dy = o.y-s.y;
+              const d2 = dx*dx + dy*dy;
+              if (d2 < bestD2){ bestD2 = d2; next = o; }
+            }
+            if (next){
+              const na = Math.atan2(next.y-s.y, next.x-s.x);
+              s.vx = Math.cos(na) * s.speed;
+              s.vy = Math.sin(na) * s.speed;
+              s.bouncesLeft--;
+              // brief sparkle trail for the bounce
+              fx.push({ kind:'spark', x:s.x, y:s.y, vx:0, vy:0, t:0, life:0.2, c:'#cfd3da' });
+            } else {
+              s.life = 0;
+            }
+          } else {
+            s.life = 0;
+          }
+          break;
+        }
+      }
+      continue;
+    }
+
     s.x += s.vx*dt; s.y += s.vy*dt;
     if (s.kind==='shuriken') s.rot += dt*22;
     if (s.kind==='petal') s.rot += s.vr*dt;
     if (s.kind==='kunai') s.rot = Math.atan2(s.vy, s.vx);
+    if (s.kind==='spear') s.rot = Math.atan2(s.vy, s.vx);
 
     for (const e of enemies){
       if (e.dead) continue;
-      if (s.kind==='ki'){ if (s.hit.has(e._id)) continue; }
+      // shots with a .hit Set use Set-based pierce-all (ki, spear);
+      // others use a numeric pierce counter
+      if (s.hit){ if (s.hit.has(e._id)) continue; }
       if (Math.hypot(e.x-s.x, e.y-s.y) < e.r + s.r){
         damage(e, s.dmg, s.vx, s.vy);
-        if (s.kind==='ki'){ s.hit.add(e._id); }
+        if (s.hit){ s.hit.add(e._id); }
         else { s.pierce--; if (s.pierce<0) s.life=0; }
       }
     }
@@ -1054,6 +1222,42 @@ function drawShot(s){
     ctx.beginPath(); ctx.ellipse(0,0,8,4,0,0,TAU); ctx.fill();
     ctx.fillStyle='rgba(216,54,82,0.7)';
     ctx.beginPath(); ctx.ellipse(0,0,3,1.4,0,0,TAU); ctx.fill();
+  } else if (s.kind==='spear'){
+    ctx.rotate(s.rot || 0);
+    // shaft
+    ctx.strokeStyle='#cfb88a'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.moveTo(-12,0); ctx.lineTo(8,0); ctx.stroke();
+    // tip
+    ctx.fillStyle='#dfe4ee'; ctx.shadowColor='#fff'; ctx.shadowBlur=5;
+    ctx.beginPath(); ctx.moveTo(14,0); ctx.lineTo(6,-3); ctx.lineTo(6,3); ctx.closePath(); ctx.fill();
+    ctx.shadowBlur=0;
+    // bone wrap near grip
+    ctx.fillStyle='#fff7e0';
+    ctx.fillRect(-12,-2,3,4);
+  } else if (s.kind==='rico'){
+    ctx.rotate(s.rot);
+    ctx.fillStyle='#e7e2c8'; ctx.shadowColor='#fff7a0'; ctx.shadowBlur=6;
+    // 4-pointed star, larger than a regular shuriken to read as the "big" version
+    for (let i=0;i<4;i++){
+      ctx.rotate(Math.PI/2);
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(9,-2.5); ctx.lineTo(12,0); ctx.lineTo(9,2.5); ctx.closePath(); ctx.fill();
+    }
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#7a5b2a';
+    ctx.beginPath(); ctx.arc(0,0,3,0,TAU); ctx.fill();
+  } else if (s.kind==='arrow'){
+    const ang = Math.atan2(s.vy, s.vx);
+    ctx.rotate(ang);
+    // shaft
+    ctx.strokeStyle='#d8d1b6'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(-10,0); ctx.lineTo(7,0); ctx.stroke();
+    // tip
+    ctx.fillStyle='#cfd3da'; ctx.shadowColor='#fff'; ctx.shadowBlur=4;
+    ctx.beginPath(); ctx.moveTo(12,0); ctx.lineTo(6,-2.5); ctx.lineTo(6,2.5); ctx.closePath(); ctx.fill();
+    ctx.shadowBlur=0;
+    // fletching
+    ctx.fillStyle='#d8362b';
+    ctx.beginPath(); ctx.moveTo(-10,0); ctx.lineTo(-6,-3); ctx.lineTo(-7,0); ctx.lineTo(-6,3); ctx.closePath(); ctx.fill();
   } else if (s.kind==='kunai'){
     ctx.rotate(s.rot);
     // blade
@@ -1145,15 +1349,18 @@ function drawArc(b){
   const a0 = b.ang - b.arc/2, sweep = b.arc;
   const ox = (b.x !== undefined) ? b.x : player.x;
   const oy = (b.y !== undefined) ? b.y : player.y;
+  const lwScale = b.lwScale || 1;
   ctx.save(); ctx.translate(ox, oy);
   ctx.globalAlpha = (1-k)*0.9;
-  ctx.lineWidth = 4 + (1-k)*4;
-  ctx.strokeStyle = '#ffffff'; ctx.shadowColor='#d8362b'; ctx.shadowBlur=12;
+  ctx.lineWidth = (4 + (1-k)*4) * lwScale;
+  ctx.strokeStyle = b.color || '#ffffff';
+  ctx.shadowColor = b.glow || '#d8362b';
+  ctx.shadowBlur = b.glow ? 18 : 12;
   ctx.beginPath(); ctx.arc(0,0,b.range, a0, a0 + sweep*Math.min(1,k*1.6)); ctx.stroke();
   // bright leading edge
   const le = a0 + sweep*Math.min(1,k*1.6);
-  ctx.fillStyle='rgba(255,255,255,0.9)';
-  ctx.beginPath(); ctx.arc(Math.cos(le)*b.range, Math.sin(le)*b.range, 3.5,0,TAU); ctx.fill();
+  ctx.fillStyle = b.color ? 'rgba(255,220,150,0.95)' : 'rgba(255,255,255,0.9)';
+  ctx.beginPath(); ctx.arc(Math.cos(le)*b.range, Math.sin(le)*b.range, 3.5*lwScale,0,TAU); ctx.fill();
   ctx.restore();
 }
 
