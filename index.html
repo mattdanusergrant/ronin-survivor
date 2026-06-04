@@ -136,6 +136,7 @@
       <div class="opt" id="opt-joystick"><span>Show on-screen joystick</span><span class="sw"></span></div>
     </div>
     <div class="btn btn-sec" id="opt-soccer" style="margin-top:8px">⚽ Samurai Soccer</div>
+    <div class="btn btn-sec" id="opt-volley">🏐 Samurai Volleyball</div>
     <div class="btn" id="opt-back">Back</div>
   </div>
 
@@ -146,6 +147,15 @@
     <div class="stats" id="soccer-stats"></div>
     <div class="btn" id="soccer-again">Rematch</div>
     <div class="btn btn-sec" id="soccer-back">Main Menu</div>
+  </div>
+
+  <!-- Volleyball match end -->
+  <div id="volley-over" class="overlay hidden">
+    <div class="tag" id="volley-tag">Set Over</div>
+    <h1 id="volley-ttl" style="font-size:30px">VICTORY</h1>
+    <div class="stats" id="volley-stats"></div>
+    <div class="btn" id="volley-again">Rematch</div>
+    <div class="btn btn-sec" id="volley-back">Main Menu</div>
   </div>
 
   <!-- Game over -->
@@ -195,7 +205,7 @@ function angDiff(a, b){ let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d 
 const D = id => document.getElementById(id);
 const elHud = D('hud'), elPauseBtn = D('pausebtn');
 const elTitle = D('title'), elLevelup = D('levelup'), elPaused = D('paused'), elOver = D('over');
-const elOptions = D('options'), elSoccerOver = D('soccer-over');
+const elOptions = D('options'), elSoccerOver = D('soccer-over'), elVolleyOver = D('volley-over');
 
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
@@ -314,9 +324,10 @@ function pMove(x,y){
 }
 function pEnd(){ stick.on=false; stick.dx=0; stick.dy=0; }
 cv.addEventListener('pointerdown', e=>{
-  const inMain = game && game.state===STATE.PLAY;
+  const inMain   = game && game.state===STATE.PLAY;
   const inSoccer = soccer && soccer.state === 'play';
-  if (inMain || inSoccer){ cv.setPointerCapture(e.pointerId); pStart(e.clientX,e.clientY); }
+  const inVolley = volley && volley.state === 'play';
+  if (inMain || inSoccer || inVolley){ cv.setPointerCapture(e.pointerId); pStart(e.clientX,e.clientY); }
 });
 cv.addEventListener('pointermove', e=>{ if (stick.on) pMove(e.clientX,e.clientY); });
 cv.addEventListener('pointerup', pEnd);
@@ -1253,10 +1264,15 @@ function updateHud(){
 //  FLOW
 // =====================================================================
 function showOnly(el){
-  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver]) o.classList.add('hidden');
+  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
 }
 function togglePause(){
+  if (volley){
+    if (volley.state === 'play'){ volley.state = 'paused'; showOnly(elPaused); }
+    else if (volley.state === 'paused'){ volley.state = 'play'; showOnly(null); }
+    return;
+  }
   if (soccer){
     if (soccer.state === 'play'){ soccer.state = 'paused'; showOnly(elPaused); }
     else if (soccer.state === 'paused'){ soccer.state = 'play'; showOnly(null); }
@@ -1645,9 +1661,284 @@ function drawSoccerHud(){
   ctx.restore();
 }
 
+// =====================================================================
+//  SAMURAI VOLLEYBALL — side-view 1v1, gravity ball, net in middle
+// =====================================================================
+let volley = null;
+const VOLLEY = {
+  WIDTH: 760,
+  FLOOR_Y: 260,
+  NET_TOP_Y: 80,
+  PLAYER_R: 16,
+  BALL_R: 14,
+  PLAYER_SPEED: 320,
+  AI_SPEED: 260,
+  JUMP_V: -560,
+  PLAYER_GRAVITY: 1500,
+  BALL_GRAVITY: 720,
+  BALL_FRICTION_X: 0.995,
+  KICK_UP: 480,
+  KICK_FWD: 360,
+  SLASH_RANGE: 78,
+  SLASH_ARC: 1.85,
+  SLASH_CD: 0.30,
+  WIN_SCORE: 5,
+};
+
+function startVolley(){
+  game = null; soccer = null;
+  elHud.classList.add('hidden');
+  elPauseBtn.classList.remove('hidden');
+  const groundY = VOLLEY.FLOOR_Y - VOLLEY.PLAYER_R;
+  volley = {
+    state:'play', t:0,
+    score:[0,0], lastScorer:-1, serveCd:0.6, shake:0,
+    ball: { x:-160, y:-100, r:VOLLEY.BALL_R, vx:rand(-30,30), vy:80, hit:0 },
+    player:{ x:-220, y:groundY, vy:0, grounded:true, r:VOLLEY.PLAYER_R,
+             lastAng:0, slashCd:0, walkPhase:0, moving:false, hurt:0 },
+    ai:    { x: 220, y:groundY, vy:0, grounded:true, r:VOLLEY.PLAYER_R,
+             lastAng:Math.PI, slashCd:0, walkPhase:0, moving:false, hurt:0 },
+    blades:[], fxs:[], petals:[],
+  };
+  for (let i=0;i<20;i++) volley.petals.push({
+    x:rand(-380,380), y:rand(-200,VOLLEY.FLOOR_Y),
+    s:rand(.5,1.2), vx:rand(-12,-26), vy:rand(20,40), rot:rand(0,TAU), vr:rand(-2,2)
+  });
+  showOnly(null);
+}
+
+function updateVolley(dt){
+  const V = volley;
+  if (V.state !== 'play') return;
+  V.t += dt;
+  if (V.serveCd > 0) V.serveCd -= dt;
+
+  const v = inputVec();
+  const halfW = VOLLEY.WIDTH/2;
+  const groundY = VOLLEY.FLOOR_Y - VOLLEY.PLAYER_R;
+
+  // --- player movement ---
+  const P = V.player;
+  P.x += v.x * VOLLEY.PLAYER_SPEED * dt;
+  P.moving = v.x !== 0;
+  if (v.x !== 0){ P.lastAng = v.x > 0 ? 0 : Math.PI; P.walkPhase += dt*12; }
+  if (v.y < -0.4 && P.grounded){ P.vy = VOLLEY.JUMP_V; P.grounded = false; }
+  // gravity
+  if (!P.grounded){
+    P.vy += VOLLEY.PLAYER_GRAVITY * dt;
+    P.y += P.vy * dt;
+    if (P.y >= groundY){ P.y = groundY; P.vy = 0; P.grounded = true; }
+  }
+  // left player can't cross net (x must stay <= -r)
+  P.x = clamp(P.x, -halfW + P.r, -P.r);
+
+  // --- AI ---
+  const A = V.ai, B = V.ball;
+  // target x = ball x if ball will arrive on AI side; otherwise hover at center-right
+  let targetX;
+  if (B.x > -20 || B.vx > 0) targetX = clamp(B.x, A.r, halfW - A.r);
+  else targetX = 120;  // ready stance
+  const dx = targetX - A.x;
+  if (Math.abs(dx) > 2) A.x += Math.sign(dx) * VOLLEY.AI_SPEED * dt;
+  // AI jumps if ball is in air and close horizontally
+  const ballClose = Math.abs(B.x - A.x) < 80;
+  const ballHigh  = B.y < VOLLEY.FLOOR_Y - 40 && B.y > VOLLEY.NET_TOP_Y - 60;
+  const ballMine  = B.x > -20;
+  if (A.grounded && ballClose && ballHigh && ballMine && Math.random() < 0.18){
+    A.vy = VOLLEY.JUMP_V; A.grounded = false;
+  }
+  if (!A.grounded){
+    A.vy += VOLLEY.PLAYER_GRAVITY * dt;
+    A.y += A.vy * dt;
+    if (A.y >= groundY){ A.y = groundY; A.vy = 0; A.grounded = true; }
+  }
+  A.x = clamp(A.x, A.r, halfW - A.r);
+  A.lastAng = Math.PI;
+
+  // --- ball physics ---
+  B.x += B.vx * dt; B.y += B.vy * dt;
+  B.vy += VOLLEY.BALL_GRAVITY * dt;
+  B.vx *= Math.pow(VOLLEY.BALL_FRICTION_X, dt*60);
+  // side walls
+  if (B.x < -halfW + B.r){ B.x = -halfW + B.r; B.vx = -B.vx*0.8; }
+  if (B.x >  halfW - B.r){ B.x =  halfW - B.r; B.vx = -B.vx*0.8; }
+  // ceiling (soft)
+  if (B.y < -260){ B.y = -260; B.vy = Math.abs(B.vy)*0.6; }
+  // net: thin column at x≈0, from NET_TOP_Y down to FLOOR_Y
+  if (Math.abs(B.x) < B.r + 4 && B.y > VOLLEY.NET_TOP_Y - B.r){
+    if (B.vx > 0){ B.x = -B.r - 4; B.vx = -Math.abs(B.vx)*0.55; }
+    else        { B.x =  B.r + 4; B.vx =  Math.abs(B.vx)*0.55; }
+  }
+  // floor → score
+  if (B.y >= VOLLEY.FLOOR_Y - B.r){
+    volleyScore(B.x < 0 ? 1 : 0);
+    return;
+  }
+  if (B.hit > 0) B.hit -= dt;
+
+  // body bumps the ball softly
+  resolveSoccerBallBody(B, P);
+  resolveSoccerBallBody(B, A);
+
+  // auto-slash for both
+  volleySlashTick(P, dt, B, +1);
+  volleySlashTick(A, dt, B, -1);
+
+  // blades / fx / petals
+  for (const b of V.blades) b.t += dt;
+  V.blades = V.blades.filter(b => b.t < b.life);
+  for (const f of V.fxs){
+    f.t += dt;
+    if (f.kind==='spark'){ f.x+=f.vx*dt; f.y+=f.vy*dt; f.vx*=0.92; f.vy*=0.92; }
+  }
+  V.fxs = V.fxs.filter(f => f.t < f.life);
+  for (const pt of V.petals){
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.rot += pt.vr*dt;
+    if (pt.y > VOLLEY.FLOOR_Y){ pt.y = -250; pt.x = rand(-halfW, halfW); }
+    if (pt.x < -halfW){ pt.x = halfW; }
+  }
+  if (V.shake>0) V.shake = Math.max(0, V.shake - dt*40);
+  if (V.player.hurt>0) V.player.hurt -= dt;
+  if (V.ai.hurt>0) V.ai.hurt -= dt;
+}
+
+function volleySlashTick(P, dt, B, dirSign){
+  const V = volley;
+  if (P.slashCd > 0) P.slashCd -= dt;
+  if (P.slashCd > 0) return;
+  const dbx = B.x - P.x, dby = B.y - P.y, db = Math.hypot(dbx, dby);
+  if (db > VOLLEY.SLASH_RANGE + B.r) return;
+  // cone aim toward ball
+  const ang = Math.atan2(dby, dbx);
+  // we always fire when ball is in reach — no need to re-check cone (the slash IS aimed at the ball)
+  P.slashCd = VOLLEY.SLASH_CD;
+  P.lastAng = ang;
+  V.blades.push({ kind:'arc', x:P.x, y:P.y, ang, range:VOLLEY.SLASH_RANGE, arc:VOLLEY.SLASH_ARC, t:0, life:0.16, side:1 });
+  // kick: strong up + horizontal toward opponent (blend with attack direction)
+  B.vy = -VOLLEY.KICK_UP;
+  B.vx = dirSign * VOLLEY.KICK_FWD * 0.7 + (db>0 ? dbx/db*VOLLEY.KICK_FWD*0.3 : 0);
+  B.hit = 0.2;
+  V.shake = Math.max(V.shake, 3);
+  for (let i=0;i<6;i++){
+    const a=rand(0,TAU), sp=rand(80,160);
+    V.fxs.push({ kind:'spark', x:B.x, y:B.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#e7b53b' });
+  }
+}
+
+function volleyScore(who){
+  const V = volley;
+  V.score[who]++;
+  V.lastScorer = who;
+  V.shake = 8;
+  const c = who === 0 ? '#e7b53b' : '#d8362b';
+  for (let i=0;i<26;i++){
+    const a=rand(0,TAU), sp=rand(120,220);
+    V.fxs.push({ kind:'spark', x:V.ball.x, y:V.ball.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c });
+  }
+  if (V.score[who] >= VOLLEY.WIN_SCORE){ endVolleyMatch(); return; }
+  // loser serves
+  const serverSide = who === 0 ? +1 : -1;
+  const groundY = VOLLEY.FLOOR_Y - VOLLEY.PLAYER_R;
+  V.ball.x = serverSide * 180; V.ball.y = -100;
+  V.ball.vx = -serverSide * 40; V.ball.vy = 60;
+  V.player.x = -220; V.player.y = groundY; V.player.vy = 0; V.player.grounded = true;
+  V.ai.x = 220;     V.ai.y = groundY;     V.ai.vy = 0;     V.ai.grounded = true;
+  V.serveCd = 0.5;
+}
+
+function endVolleyMatch(){
+  if (!volley) return;
+  volley.state = 'over';
+  const won = volley.score[0] > volley.score[1];
+  D('volley-tag').textContent = 'Set Over';
+  D('volley-ttl').textContent = won ? 'VICTORY' : 'DEFEAT';
+  D('volley-stats').innerHTML =
+    `<div><b>You</b> ${volley.score[0]}</div><div><b>Opponent</b> ${volley.score[1]}</div>`;
+  showOnly(elVolleyOver);
+}
+
+function drawVolley(){
+  const V = volley;
+  ctx.save();
+  let sx=0, sy=0;
+  if (V.shake>0){ sx=rand(-V.shake,V.shake); sy=rand(-V.shake,V.shake); }
+  // sky → ink gradient
+  const sky = ctx.createLinearGradient(0,0,0,H);
+  sky.addColorStop(0,'#181820'); sky.addColorStop(1,'#0a0a0e');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,W,H);
+
+  // fit width into screen; keep some HUD space at top
+  const totalH = (VOLLEY.FLOOR_Y + 280);   // from approx -280 sky to FLOOR
+  const fitX = (W - 24) / VOLLEY.WIDTH;
+  const fitY = (H - 90) / totalH;
+  const fScale = Math.min(fitX, fitY);
+  // place origin so floor sits near the bottom of the screen
+  const worldTop = -280;
+  ctx.translate(W/2 + sx, 60 + sy);
+  ctx.scale(fScale, fScale);
+  ctx.translate(0, -worldTop);
+
+  // red-sun vignette behind action
+  const grd = ctx.createRadialGradient(0, 40, 30, 0, 40, 380);
+  grd.addColorStop(0,'rgba(216,54,43,0.12)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = grd; ctx.fillRect(-VOLLEY.WIDTH/2, worldTop, VOLLEY.WIDTH, totalH);
+
+  // petals
+  for (const pt of V.petals) drawPetal(pt);
+
+  // floor
+  ctx.fillStyle = '#16161c';
+  ctx.fillRect(-VOLLEY.WIDTH/2, VOLLEY.FLOOR_Y, VOLLEY.WIDTH, 30);
+  ctx.strokeStyle = '#3a3a44'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-VOLLEY.WIDTH/2, VOLLEY.FLOOR_Y); ctx.lineTo(VOLLEY.WIDTH/2, VOLLEY.FLOOR_Y); ctx.stroke();
+
+  // net
+  ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(0, VOLLEY.NET_TOP_Y); ctx.lineTo(0, VOLLEY.FLOOR_Y); ctx.stroke();
+  ctx.strokeStyle = 'rgba(231,181,59,0.35)'; ctx.lineWidth = 1;
+  for (let y=VOLLEY.NET_TOP_Y; y<VOLLEY.FLOOR_Y; y+=8){
+    ctx.beginPath(); ctx.moveTo(-4, y); ctx.lineTo(4, y); ctx.stroke();
+  }
+  ctx.fillStyle = '#e7b53b';
+  ctx.beginPath(); ctx.arc(0, VOLLEY.NET_TOP_Y - 2, 4, 0, TAU); ctx.fill();
+
+  // blades
+  for (const b of V.blades) drawArc(b);
+
+  // ball + samurai (reuse soccer renderers)
+  drawSoccerSamurai(V.ai,     '#3a2628');
+  drawSoccerSamurai(V.player, '#1f1f26');
+  drawSoccerBall(V.ball);
+
+  // fx
+  for (const f of V.fxs) drawFx(f);
+
+  ctx.restore();
+
+  // HUD
+  ctx.save();
+  ctx.textAlign='center';
+  ctx.font='bold 22px -apple-system,sans-serif'; ctx.fillStyle='#fff';
+  ctx.fillText(`${V.score[0]} – ${V.score[1]}`, W/2, 28);
+  ctx.font='11px -apple-system,sans-serif'; ctx.fillStyle='#cfd3da';
+  ctx.fillText(`First to ${VOLLEY.WIN_SCORE}`, W/2, 46);
+  ctx.font='bold 11px -apple-system,sans-serif';
+  ctx.textAlign='left'; ctx.fillStyle='#e7b53b'; ctx.fillText('YOU', W/2-60, 24);
+  ctx.textAlign='right'; ctx.fillStyle='#d8362b'; ctx.fillText('OPP', W/2+60, 24);
+  ctx.restore();
+
+  if (SETTINGS.joystick && V.state === 'play') drawStick();
+}
+
 function loop(now){
   let dt = (now - last) / 1000; last = now;
   if (dt > 0.05) dt = 0.05;            // clamp big stalls
+  if (volley){
+    if (volley.state === 'play') updateVolley(dt);
+    drawVolley();
+    requestAnimationFrame(loop);
+    return;
+  }
   if (soccer){
     if (soccer.state === 'play') updateSoccer(dt);
     drawSoccer();
@@ -1677,13 +1968,16 @@ requestAnimationFrame(loop);
 D('startbtn').onclick = ()=>{ newGame(); };
 D('againbtn').onclick = ()=>{ newGame(); };
 D('resumebtn').onclick = togglePause;
-D('quitbtn').onclick = ()=>{ game=null; soccer=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
+D('quitbtn').onclick = ()=>{ game=null; soccer=null; volley=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 elPauseBtn.onclick = togglePause;
 
-// ---------- soccer wiring ----------
+// ---------- soccer / volleyball wiring ----------
 D('opt-soccer').onclick = ()=>{ startSoccer(); };
 D('soccer-again').onclick = ()=>{ startSoccer(); };
 D('soccer-back').onclick = ()=>{ soccer=null; elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
+D('opt-volley').onclick = ()=>{ startVolley(); };
+D('volley-again').onclick = ()=>{ startVolley(); };
+D('volley-back').onclick = ()=>{ volley=null; elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 
 // ---------- options menu ----------
 function refreshOptionsUI(){
