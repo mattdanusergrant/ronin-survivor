@@ -298,6 +298,10 @@ function newGame(){
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
+  // seed a starting crowd — they wander idly until they notice you, so the
+  // road feels populated from the first second. Spread across a band of
+  // distances (some on-screen, some just beyond) all around the player.
+  for (let i=0;i<22;i++) spawnEnemy(false, rand(160, 520));
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -355,10 +359,10 @@ const ENEMY_TYPES = {
   brute:   { hp:120, speed:30, r:18, dmg:18, xp:5, color:'#4a2a44', tier:3, sight:170, callR:130, aggro:true  },
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
-function spawnInterval(){ return Math.max(0.18, 1.05 - game.t * 0.0065); }
+function spawnInterval(){ return Math.max(0.18, 0.72 - game.t * 0.0045); }
 
-function spawnEnemy(boss=false){
-  const ang = rand(0, TAU), dist = Math.max(W,H)/viewScale * 0.62 + 40;
+function spawnEnemy(boss=false, distOverride=null){
+  const ang = rand(0, TAU), dist = distOverride !== null ? distOverride : Math.max(W,H)/viewScale * 0.62 + 40;
   const x = game.cam.x + Math.cos(ang) * dist, y = game.cam.y + Math.sin(ang) * dist;
   if (boss){
     enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
