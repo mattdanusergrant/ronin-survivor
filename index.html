@@ -1673,7 +1673,7 @@ const VOLLEY = {
   BALL_R: 14,
   PLAYER_SPEED: 320,
   AI_SPEED: 260,
-  JUMP_V: -560,
+  JUMP_V: -744,
   PLAYER_GRAVITY: 1500,
   BALL_GRAVITY: 720,
   BALL_FRICTION_X: 0.995,
@@ -1730,8 +1730,9 @@ function updateVolley(dt){
     P.y += P.vy * dt;
     if (P.y >= groundY){ P.y = groundY; P.vy = 0; P.grounded = true; }
   }
-  // left player can't cross net (x must stay <= -r)
-  P.x = clamp(P.x, -halfW + P.r, -P.r);
+  // net blocks the body when in its vertical range — above the net top, crossing is physically possible
+  const pAboveNet = (P.y + P.r) <= VOLLEY.NET_TOP_Y;
+  P.x = clamp(P.x, -halfW + P.r, pAboveNet ? (halfW - P.r) : -P.r);
 
   // --- AI ---
   const A = V.ai, B = V.ball;
@@ -1753,7 +1754,8 @@ function updateVolley(dt){
     A.y += A.vy * dt;
     if (A.y >= groundY){ A.y = groundY; A.vy = 0; A.grounded = true; }
   }
-  A.x = clamp(A.x, A.r, halfW - A.r);
+  const aAboveNet = (A.y + A.r) <= VOLLEY.NET_TOP_Y;
+  A.x = clamp(A.x, aAboveNet ? (-halfW + A.r) : A.r, halfW - A.r);
   A.lastAng = Math.PI;
 
   // --- ball physics ---
