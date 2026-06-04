@@ -87,6 +87,30 @@
     border-radius:50%; background:#cfd3da; transition:left .15s;}
   .opt.on .sw{background:var(--blood);}
   .opt.on .sw::after{left:20px;}
+
+  /* ryo line + dojo */
+  .ryoline{font-size:14px; color:var(--gold); letter-spacing:.5px;}
+  .ryoline b{color:var(--bone); font-weight:700;}
+  #dojo-grid{display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%; max-width:430px;
+    max-height:54vh; overflow-y:auto; padding:2px; margin:2px 0;}
+  .up{pointer-events:auto; cursor:pointer; text-align:left; background:var(--panel);
+    border:1px solid var(--line); border-radius:9px; padding:9px 10px;
+    transition:transform .07s, border-color .15s, background .15s;}
+  .up:active{transform:scale(.97);}
+  .up.afford{border-color:#4a3a14;}
+  .up.maxed{opacity:.6; cursor:default;}
+  .up .uh{display:flex; align-items:center; gap:7px;}
+  .up .uico{font-size:18px;}
+  .up .unm{font-size:13px; font-weight:700; color:var(--bone);}
+  .up .upips{margin-left:auto; display:flex; gap:2px;}
+  .up .pip{width:6px; height:6px; border-radius:50%; background:#2f2f3a;}
+  .up .pip.on{background:var(--gold);}
+  .up .ueff{font-size:11px; color:var(--dim); margin:4px 0 5px;}
+  .up .ucost{font-size:12px; font-weight:700; color:var(--gold);}
+  .up.maxed .ucost{color:var(--dim);}
+  .up.poor .ucost{color:#7a4a45;}
+  .dojo-stats{font-size:11px; color:var(--dim); display:flex; gap:14px; flex-wrap:wrap; justify-content:center; max-width:420px;}
+  .dojo-stats b{color:var(--bone);}
 </style>
 </head>
 <body>
@@ -105,12 +129,16 @@
     <h1>RONIN <span class="acc">SURVIVOR</span></h1>
     <div class="lede">A lone swordsman walks the road to <b style="color:var(--gold)">No.1</b>. The world wants the headband off his head. Stand your ground, sharpen your blade, and cut down everything that comes.</div>
     <div class="btn" id="startbtn">Draw Sword</div>
+    <div id="title-ryo" class="ryoline">🪙 <b>0</b> Ryo</div>
     <div class="help">
       <b>Move:</b> WASD / arrows — or drag anywhere on screen (touch).<br>
       Your blade swings on its own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
       Don't get touched. Last as long as you can.
     </div>
-    <div class="btn btn-sec" id="opt-from-title">Options</div>
+    <div style="display:flex; gap:8px;">
+      <div class="btn btn-sec" id="dojo-from-title">🏯 The Dojo</div>
+      <div class="btn btn-sec" id="opt-from-title">Options</div>
+    </div>
   </div>
 
   <!-- Level up -->
@@ -163,8 +191,25 @@
     <div class="tag" id="overtag">Cut Down</div>
     <h1 id="overttl" style="font-size:30px">YOU FELL</h1>
     <div class="stats" id="overstats"></div>
+    <div class="ryoline" id="over-ryo"></div>
     <div class="lede" id="overflavor"></div>
-    <div class="btn" id="againbtn">Again</div>
+    <div style="display:flex; gap:8px;">
+      <div class="btn" id="againbtn">Again</div>
+      <div class="btn btn-sec" id="over-dojo">🏯 Dojo</div>
+    </div>
+  </div>
+
+  <!-- The Dojo (meta progression shop) -->
+  <div id="dojo" class="overlay hidden">
+    <div class="tag">The Dojo</div>
+    <h1 style="font-size:24px">SHARPEN THE BLADE</h1>
+    <div id="dojo-ryo" class="ryoline">🪙 <b>0</b> Ryo</div>
+    <div id="dojo-grid"></div>
+    <div id="dojo-stats" class="dojo-stats"></div>
+    <div style="display:flex; gap:8px;">
+      <div class="btn" id="dojo-back">Back</div>
+      <div class="btn btn-sec" id="dojo-reset" style="border-color:#5a2420">Reset Progress</div>
+    </div>
   </div>
 </div>
 
@@ -206,6 +251,7 @@ const D = id => document.getElementById(id);
 const elHud = D('hud'), elPauseBtn = D('pausebtn');
 const elTitle = D('title'), elLevelup = D('levelup'), elPaused = D('paused'), elOver = D('over');
 const elOptions = D('options'), elSoccerOver = D('soccer-over'), elVolleyOver = D('volley-over');
+const elDojo = D('dojo');
 
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
@@ -216,6 +262,73 @@ const SETTINGS = (function(){
 })();
 function saveSettings(){ try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch {} }
 let optionsReturnTo = null;  // remember which overlay to restore on Back
+
+// ---------- META PROGRESSION (The Dojo) ----------
+// Persistent Ryo currency + permanent upgrades bought between runs.
+const META_KEY = 'ronin-meta-v1';
+const META = (function(){
+  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0 };
+  try {
+    const m = Object.assign(defaults, JSON.parse(localStorage.getItem(META_KEY) || '{}'));
+    m.up = m.up || {};
+    return m;
+  } catch { return defaults; }
+})();
+function saveMeta(){ try { localStorage.setItem(META_KEY, JSON.stringify(META)); } catch {} }
+const metaLvl = id => META.up[id] || 0;
+
+// Each upgrade: name, ico, max, cost(level)→Ryo for the NEXT rank, blurb(level)→effect text.
+// `apply` mutates the fresh player at run start; some set run-scoped flags consumed elsewhere.
+const META_UPGRADES = {
+  might:    { name:'Might',      ico:'🗡️', max:8, cost:l=>Math.floor(40*Math.pow(1.55,l)),
+    blurb:l=>`+${l*6}% all damage`,            apply:(p,l)=>p.power*=(1+0.06*l) },
+  vitality: { name:'Vitality',   ico:'❤️', max:8, cost:l=>Math.floor(45*Math.pow(1.55,l)),
+    blurb:l=>`+${l*15} max HP`,                apply:(p,l)=>{p.maxhp+=15*l; p.hp+=15*l;} },
+  swift:    { name:'Swiftness',  ico:'👣', max:5, cost:l=>Math.floor(50*Math.pow(1.7,l)),
+    blurb:l=>`+${l*4}% move speed`,            apply:(p,l)=>{p.speed*=(1+0.04*l); p.baseSpeed*=(1+0.04*l);} },
+  haste:    { name:'Quick Hands',ico:'⚡', max:6, cost:l=>Math.floor(60*Math.pow(1.7,l)),
+    blurb:l=>`-${l*3}% cooldowns`,             apply:(p,l)=>p.haste*=Math.pow(0.97,l) },
+  fortune:  { name:'Fortune',    ico:'🪙', max:5, cost:l=>Math.floor(55*Math.pow(1.8,l)),
+    blurb:l=>`+${l*12}% Ryo earned`,           apply:(p,l)=>p.ryoMult=(1+0.12*l) },
+  avarice:  { name:'Avarice',    ico:'💠', max:5, cost:l=>Math.floor(40*Math.pow(1.6,l)),
+    blurb:l=>`+${l*7}% ki gained`,             apply:(p,l)=>p.xpMult*=(1+0.07*l) },
+  recovery: { name:'Recovery',   ico:'🍵', max:5, cost:l=>Math.floor(50*Math.pow(1.6,l)),
+    blurb:l=>`+${(l*0.3).toFixed(1)} HP / sec`,apply:(p,l)=>p.regen+=0.3*l },
+  armor:    { name:'Armor',      ico:'🛡️', max:6, cost:l=>Math.floor(60*Math.pow(1.7,l)),
+    blurb:l=>`-${l*4}% damage taken`,          apply:(p,l)=>p.armor=Math.min(0.6,0.04*l) },
+  magnet:   { name:'Soul Pull',  ico:'🧲', max:4, cost:l=>Math.floor(40*Math.pow(1.7,l)),
+    blurb:l=>`+${l*18}% pickup range`,         apply:(p,l)=>p.magnet*=(1+0.18*l) },
+  tenacity: { name:'Tenacity',   ico:'💀', max:2, cost:l=>Math.floor(220*Math.pow(2.2,l)),
+    blurb:l=>`Revive ${l}× per run at 50% HP`, apply:(p,l)=>p.revives=l },
+  prodigy:  { name:'Prodigy',    ico:'🌟', max:3, cost:l=>Math.floor(140*Math.pow(1.9,l)),
+    blurb:l=>`Start with ${l} bonus weapon${l===1?'':'s'}`, apply:(p,l)=>p.bonusWeapons=l },
+  warblade: { name:'Honed Edge', ico:'⚔️', max:3, cost:l=>Math.floor(90*Math.pow(1.85,l)),
+    blurb:l=>`Katana starts at Lv ${1+l}`,     apply:(p,l)=>p.weapons.katana=1+l },
+};
+
+// total Ryo from a finished run, scaled by Fortune
+function computeRyo(){
+  const base = game.kills * 1 + (game.bossKills||0) * 30 + Math.floor(game.t) * 0.6 + game.level * 4;
+  const mult = player.ryoMult || 1;
+  return Math.max(1, Math.floor(base * mult));
+}
+// apply every owned upgrade to a freshly-built player at run start
+function applyMeta(p){
+  p.armor = 0; p.revives = 0; p.ryoMult = 1; p.bonusWeapons = 0;
+  for (const id in META_UPGRADES){
+    const l = metaLvl(id);
+    if (l > 0) META_UPGRADES[id].apply(p, l);
+  }
+  // Prodigy: grant N random extra weapons (besides the katana) at level 1
+  if (p.bonusWeapons > 0){
+    const pool = Object.keys(WEAPONS).filter(w => w !== 'katana');
+    for (let i=0; i<p.bonusWeapons && pool.length; i++){
+      const j = (Math.random()*pool.length)|0;
+      p.weapons[pool[j]] = 1;
+      pool.splice(j,1);
+    }
+  }
+}
 const elCards = D('cards');
 
 // =====================================================================
@@ -315,7 +428,10 @@ function newGame(){
     x:0, y:0, r:14, hp:100, maxhp:100, speed:148, baseSpeed:148,
     power:1, haste:1, magnet:1, xpMult:1, regen:0,
     inv:0, hurt:0, weapons:{ katana:1 }, passives:{}, walkPhase:0, moving:false,
+    armor:0, revives:0, ryoMult:1, bonusWeapons:0,
   };
+  applyMeta(player);             // permanent Dojo upgrades
+  game.bossKills = 0;
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
@@ -417,6 +533,7 @@ function damage(e, dmg, kx=0, ky=0){
 }
 function killEnemy(e){
   e.dead = true; game.kills++;
+  if (e.boss) game.bossKills = (game.bossKills||0) + 1;
   if (e.boss) shake = Math.max(shake, 10);
   // ki orbs (boss bursts several)
   const n = e.boss ? 12 : 1;
@@ -805,8 +922,14 @@ function update(dt){
     }
 
     if (d < e.r + P.r && P.inv<=0){
-      P.hp -= e.dmg; P.inv = 0.7; P.hurt = 0.25; shake = Math.max(shake, 6);
-      if (P.hp <= 0){ P.hp = 0; gameOver(false); return; }
+      P.hp -= e.dmg * (1 - (P.armor||0)); P.inv = 0.7; P.hurt = 0.25; shake = Math.max(shake, 6);
+      if (P.hp <= 0){
+        if (P.revives > 0){               // Tenacity — spend a revive
+          P.revives--; P.hp = P.maxhp * 0.5; P.inv = 1.6; shake = Math.max(shake, 14);
+          for (let i=0;i<24;i++){ const a=rand(0,TAU), sp=rand(120,260);
+            fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
+        } else { P.hp = 0; gameOver(false); return; }
+      }
     }
   }
   // light separation so they don't fully stack
@@ -1487,9 +1610,11 @@ function updateHud(){
 //  FLOW
 // =====================================================================
 function showOnly(el){
-  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver]) o.classList.add('hidden');
+  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver, elDojo]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
+  if (el === elTitle) refreshTitleRyo();
 }
+function refreshTitleRyo(){ D('title-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`; }
 function togglePause(){
   if (volley){
     if (volley.state === 'play'){ volley.state = 'paused'; showOnly(elPaused); }
@@ -1508,12 +1633,20 @@ function togglePause(){
 function gameOver(win){
   game.state = STATE.OVER;
   const m = Math.floor(game.t/60), s = Math.floor(game.t%60);
+  // award Ryo + bank lifetime stats
+  const earned = computeRyo();
+  META.ryo += earned; META.totalRyo += earned; META.runs += 1;
+  META.totalKills += game.kills;
+  if (game.t > META.bestTime) META.bestTime = game.t;
+  if (game.level > META.bestLevel) META.bestLevel = game.level;
+  saveMeta();
   D('overstats').innerHTML =
     `<span>Survived <b>${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</b></span>`+
     `<span>Felled <b>${game.kills}</b></span>`+
     `<span>Level <b>${game.level}</b></span>`;
   D('overtag').textContent = win ? 'Standing' : 'Cut Down';
   D('overttl').textContent = win ? 'YOU SURVIVED' : 'YOU FELL';
+  D('over-ryo').innerHTML = `+<b>${earned}</b> 🪙 Ryo earned · <b>${META.ryo}</b> banked`;
   D('overflavor').textContent = win ? 'The road to No.1 continues.' :
     (game.t < 60 ? 'Even masters bleed. Sharpen, and walk again.' : 'A worthy stand. The blade remembers.');
   elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden');
@@ -2280,6 +2413,62 @@ D('opt-joystick').onclick = ()=>{
   saveSettings();
   refreshOptionsUI();
 };
+
+// ---------- The Dojo ----------
+function renderDojo(){
+  D('dojo-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
+  const grid = D('dojo-grid');
+  grid.innerHTML = '';
+  for (const id in META_UPGRADES){
+    const u = META_UPGRADES[id];
+    const lvl = metaLvl(id);
+    const maxed = lvl >= u.max;
+    const cost = maxed ? 0 : u.cost(lvl);
+    const afford = !maxed && META.ryo >= cost;
+    const card = document.createElement('div');
+    card.className = 'up' + (maxed ? ' maxed' : (afford ? ' afford' : ' poor'));
+    let pips = '';
+    for (let i=0;i<u.max;i++) pips += `<span class="pip${i<lvl?' on':''}"></span>`;
+    // effect shown at the NEXT level (or current if maxed)
+    const shownLvl = maxed ? lvl : lvl+1;
+    card.innerHTML =
+      `<div class="uh"><span class="uico">${u.ico}</span><span class="unm">${u.name}</span>`+
+      `<span class="upips">${pips}</span></div>`+
+      `<div class="ueff">${u.blurb(shownLvl)}</div>`+
+      `<div class="ucost">${maxed ? 'MAX' : (afford ? `Buy · ${cost} 🪙` : `${cost} 🪙`)}</div>`;
+    if (!maxed) card.onclick = ()=> buyUpgrade(id);
+    grid.appendChild(card);
+  }
+  const bt = META.bestTime, m = Math.floor(bt/60), s = Math.floor(bt%60);
+  D('dojo-stats').innerHTML =
+    `<span>Runs <b>${META.runs}</b></span>`+
+    `<span>Best <b>${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</b></span>`+
+    `<span>Best Lv <b>${META.bestLevel}</b></span>`+
+    `<span>Total felled <b>${META.totalKills}</b></span>`+
+    `<span>Lifetime Ryo <b>${META.totalRyo}</b></span>`;
+}
+function buyUpgrade(id){
+  const u = META_UPGRADES[id];
+  const lvl = metaLvl(id);
+  if (lvl >= u.max) return;
+  const cost = u.cost(lvl);
+  if (META.ryo < cost) return;
+  META.ryo -= cost;
+  META.up[id] = lvl + 1;
+  saveMeta();
+  renderDojo();
+}
+function openDojo(from){ optionsReturnTo = from; renderDojo(); showOnly(elDojo); }
+D('dojo-from-title').onclick = ()=> openDojo(elTitle);
+D('over-dojo').onclick = ()=> openDojo(elTitle);
+D('dojo-back').onclick = ()=> showOnly(optionsReturnTo || elTitle);
+D('dojo-reset').onclick = ()=>{
+  if (!confirm('Reset ALL Dojo progress and Ryo? This cannot be undone.')) return;
+  META.ryo = 0; META.up = {}; META.runs = 0; META.bestTime = 0;
+  META.bestLevel = 0; META.totalKills = 0; META.totalRyo = 0;
+  saveMeta(); renderDojo();
+};
+refreshTitleRyo();
 </script>
 </body>
 </html>
