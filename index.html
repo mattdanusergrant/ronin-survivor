@@ -244,15 +244,9 @@ const WEAPONS = {
   petal: { name:'Petal Storm', ico:'🌸', max:6,
     desc: l => l===0 ? 'A whirling burst of petal-shards bursts outward.' :
       `Lv ${l+1}: ${petalStats(l+1).count} petals, +dmg.` },
-  crow: { name:'Death Crow', ico:'🐦', max:6,
-    desc: l => l===0 ? 'A crow dives on a distant foe — AoE on impact.' :
-      `Lv ${l+1}: ${crowStats(l+1).count} crows, +dmg.` },
   lantern: { name:'Soul Lantern', ico:'🏮', max:6,
     desc: l => l===0 ? 'Drop a lantern that burns nearby foes.' :
       `Lv ${l+1}: +dmg, larger radius, longer burn.` },
-  theorb: { name:'The Orb', ico:'🔮', max:6,
-    desc: l => l===0 ? 'Spawns a glowing spot near you — step in it to detonate.' :
-      theOrbDesc(l+1) },
 };
 function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*38, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
 function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*80, count: 1 + Math.floor(l/2), speed: 360 }; }
@@ -260,19 +254,7 @@ function kiStats(l){ return { dmg: 12 + l*8, cd: 1700 - l*120, w: 30 + l*7, spee
 function orbitCount(l){ return 1 + Math.floor((l+1)/2); }
 function orbitStats(l){ return { dmg: 6 + l*4, count: orbitCount(l), radius: 64, speed: 2.4 }; }
 function petalStats(l){ return { dmg: 7 + l*4, cd: 1500 - l*110, count: 5 + l*2, speed: 220, range: 240 }; }
-function crowStats(l){ return { dmg: 32 + l*14, cd: 2500 - l*180, count: 1 + Math.floor((l-1)/2), aoe: 34 + l*4 }; }
 function lanternStats(l){ return { dmg: 4 + l*2, cd: 2200 - l*180, r: 48 + l*7, life: 3.6 + l*0.2 }; }
-function theOrbStats(l){ return { dmg: 32 + l*16, cd: 3500 - l*200, blastR: 70 + l*8, spawnDist: 92, life: 6.0, triggerR: 22 }; }
-function theOrbDesc(l){
-  const adds = {
-    2: 'Lv 2 — ECHO: leaves a smaller second orb where it blew.',
-    3: 'Lv 3 — MAGNETISM: yanks nearby foes into the blast.',
-    4: 'Lv 4 — SPLINTERING: hurls 6 shards outward on detonation.',
-    5: 'Lv 5 — TWIN: spawns two orbs that beam-chain on detonation.',
-    6: 'Lv 6 — SINGULARITY: devours every foe on screen, then erupts.',
-  };
-  return adds[l] || `Lv ${l}: bigger blast, +dmg.`;
-}
 
 const PASSIVES = {
   power:  { name:'Whetstone',    ico:'🔪', desc:'+15% all damage',        cap:6, apply:p=>p.power*=1.15 },
@@ -411,8 +393,7 @@ function killEnemy(e){
 // =====================================================================
 //  WEAPONS — fired from update()
 // =====================================================================
-const cd = { katana:0, shuriken:0, kiwave:0, petal:0, crow:0, lantern:0, theorb:0 };
-let _orbPairId = 0;
+const cd = { katana:0, shuriken:0, kiwave:0, petal:0, lantern:0 };
 let orbitT = 0, orbitNodes = [];
 function rebuildOrbit(){
   orbitNodes = [];
@@ -508,20 +489,6 @@ function fireWeapons(dt){
       }
     }
   }
-  // DEATH CROW — dive from offscreen on distant foes, AoE on impact
-  if (P.weapons.crow){
-    cd.crow -= dt;
-    const s = crowStats(P.weapons.crow);
-    if (cd.crow <= 0 && enemies.length){
-      cd.crow = s.cd/1000 * hz;
-      const tgts = enemies.slice().sort((a,b)=>
-        Math.hypot(b.x-P.x,b.y-P.y) - Math.hypot(a.x-P.x,a.y-P.y)).slice(0,s.count);
-      for (const t of tgts){
-        shots.push({ kind:'crow', x:t.x, y:t.y-240, vx:0, vy:520,
-          dmg:s.dmg*P.power, r:s.aoe, life:1.0, targetY:t.y });
-      }
-    }
-  }
   // SOUL LANTERN — drop stationary burning zone at player
   if (P.weapons.lantern){
     cd.lantern -= dt;
@@ -531,107 +498,6 @@ function fireWeapons(dt){
       shots.push({ kind:'lantern', x:P.x, y:P.y, vx:0, vy:0,
         dmg:s.dmg*P.power, r:s.r, life:s.life, tickT:0 });
     }
-  }
-  // THE ORB — spawns a glowing spot nearby; player steps in it to detonate
-  if (P.weapons.theorb){
-    cd.theorb -= dt;
-    const lv = P.weapons.theorb;
-    const s = theOrbStats(lv);
-    const activePrimary = shots.filter(o => o.kind==='theorb' && !o.isEcho).length;
-    if (cd.theorb <= 0 && activePrimary === 0){
-      cd.theorb = s.cd/1000 * hz;
-      if (lv >= 5){
-        // TWIN: opposite-side pair
-        const pairId = ++_orbPairId;
-        const a = rand(0, TAU);
-        shots.push(makeOrb(P, s, lv, a, pairId));
-        shots.push(makeOrb(P, s, lv, a + Math.PI, pairId));
-      } else {
-        shots.push(makeOrb(P, s, lv, rand(0, TAU), null));
-      }
-    }
-  }
-}
-function makeOrb(P, s, lv, ang, pairId){
-  return {
-    kind:'theorb',
-    x: P.x + Math.cos(ang) * s.spawnDist,
-    y: P.y + Math.sin(ang) * s.spawnDist,
-    r: 14, triggerR: s.triggerR, blastR: s.blastR,
-    dmg: s.dmg * player.power, lv,
-    life: s.life, pulse: 0,
-    isEcho: false, pairId,
-  };
-}
-function detonateOrb(orb){
-  if (orb._gone) return;
-  orb._gone = true; orb.life = 0;
-  shake = Math.max(shake, orb.isEcho ? 5 : 9);
-  // base AoE
-  for (const e of enemies){
-    if (e.dead) continue;
-    if (Math.hypot(e.x-orb.x, e.y-orb.y) < orb.blastR + e.r)
-      damage(e, orb.dmg, e.x-orb.x, e.y-orb.y);
-  }
-  // visual ring
-  fx.push({ kind:'orbring', x:orb.x, y:orb.y, r:orb.blastR, t:0, life:0.35 });
-  for (let i=0;i<14;i++){
-    const a=rand(0,TAU), sp=rand(80,200);
-    fx.push({ kind:'spark', x:orb.x, y:orb.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.6), c:'#b388ff' });
-  }
-  // Lv 3 — MAGNETISM: yank enemies inward (one-shot pull)
-  if (orb.lv >= 3){
-    for (const e of enemies){
-      if (e.dead) continue;
-      const dx = orb.x-e.x, dy = orb.y-e.y, d = Math.hypot(dx,dy);
-      if (d > 0 && d < orb.blastR * 2.2){
-        const k = Math.min(60, d);
-        e.x += dx/d * k; e.y += dy/d * k;
-      }
-    }
-  }
-  // Lv 4 — SPLINTERING: shards outward
-  if (orb.lv >= 4){
-    for (let i=0;i<6;i++){
-      const a = (i/6)*TAU + rand(-0.05,0.05);
-      shots.push({ kind:'shuriken', x:orb.x, y:orb.y,
-        vx:Math.cos(a)*360, vy:Math.sin(a)*360,
-        dmg:orb.dmg*0.45, r:7, life:1.0, pierce:2, rot:0 });
-    }
-  }
-  // Lv 5 — TWIN: beam-link to partner, then chain detonate
-  if (orb.lv >= 5 && orb.pairId){
-    const other = shots.find(s => s.kind==='theorb' && s.pairId === orb.pairId && !s._gone);
-    if (other){
-      fx.push({ kind:'beam', x1:orb.x, y1:orb.y, x2:other.x, y2:other.y, t:0, life:0.32 });
-      damageAlongLine(orb.x, orb.y, other.x, other.y, orb.dmg * 0.7, 24);
-      detonateOrb(other);
-    }
-  }
-  // Lv 2 — ECHO: leave a smaller orb behind (after the main blast, so player can step in next)
-  if (orb.lv >= 2 && !orb.isEcho){
-    shots.push({
-      kind:'theorb', x:orb.x, y:orb.y, r:10, triggerR:orb.triggerR*0.85,
-      blastR:orb.blastR*0.65, dmg:orb.dmg*0.55, lv:1, // echo is a basic blast
-      life:5.0, pulse:0, isEcho:true, pairId:null,
-    });
-  }
-  // Lv 6 — SINGULARITY: vortex sucks all enemies in, then erupts
-  if (orb.lv >= 6){
-    fx.push({ kind:'singularity', x:orb.x, y:orb.y, t:0, life:0.6,
-      dmg:orb.dmg*1.4, exploded:false });
-  }
-}
-function damageAlongLine(x1,y1,x2,y2,dmg,thick){
-  const dx = x2-x1, dy = y2-y1, len = Math.hypot(dx,dy) || 1;
-  const nx = dx/len, ny = dy/len;
-  for (const e of enemies){
-    if (e.dead) continue;
-    // project enemy onto line
-    const px = e.x-x1, py = e.y-y1;
-    const t = Math.max(0, Math.min(len, px*nx + py*ny));
-    const cx = x1 + nx*t, cy = y1 + ny*t;
-    if (Math.hypot(e.x-cx, e.y-cy) < thick + e.r) damage(e, dmg, e.x-cx, e.y-cy);
   }
 }
 let _eid = 1;
@@ -741,15 +607,6 @@ function update(dt){
   for (const s of shots){
     s.life -= dt;
 
-    // THE ORB — stationary glowing spot; player entry detonates
-    if (s.kind==='theorb'){
-      s.pulse += dt;
-      if (Math.hypot(s.x-player.x, s.y-player.y) < s.triggerR + player.r){
-        detonateOrb(s);
-      }
-      continue;
-    }
-
     // LANTERN — stationary, ticks damage to enemies in radius
     if (s.kind==='lantern'){
       s.tickT += dt;
@@ -766,23 +623,6 @@ function update(dt){
     s.x += s.vx*dt; s.y += s.vy*dt;
     if (s.kind==='shuriken') s.rot += dt*22;
     if (s.kind==='petal') s.rot += s.vr*dt;
-
-    // CROW — falls straight down to targetY, then explodes
-    if (s.kind==='crow'){
-      if (s.y >= s.targetY){
-        shake = Math.max(shake, 5);
-        for (const e of enemies){
-          if (e.dead) continue;
-          if (Math.hypot(e.x-s.x, e.y-s.y) < s.r + e.r) damage(e, s.dmg, e.x-s.x, e.y-s.y);
-        }
-        for (let i=0;i<10;i++){
-          const a=rand(0,TAU), sp=rand(80,170);
-          fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#1a1424' });
-        }
-        s.life = 0;
-      }
-      continue;
-    }
 
     for (const e of enemies){
       if (e.dead) continue;
@@ -819,29 +659,6 @@ function update(dt){
     f.t += dt;
     if (f.kind==='dmg') f.y += f.vy*dt;
     if (f.kind==='spark'){ f.x+=f.vx*dt; f.y+=f.vy*dt; f.vx*=0.92; f.vy*=0.92; }
-    if (f.kind==='singularity'){
-      // suck every enemy hard toward the center
-      for (const e of enemies){
-        if (e.dead) continue;
-        const dx = f.x-e.x, dy = f.y-e.y, d = Math.hypot(dx,dy) || 1;
-        const pull = Math.min(d, 520 * dt);
-        e.x += dx/d * pull; e.y += dy/d * pull;
-      }
-      // erupt at end
-      if (f.t >= f.life && !f.exploded){
-        f.exploded = true;
-        shake = Math.max(shake, 16);
-        for (const e of enemies){
-          if (e.dead) continue;
-          if (Math.hypot(e.x-f.x, e.y-f.y) < 220) damage(e, f.dmg, e.x-f.x, e.y-f.y);
-        }
-        for (let i=0;i<32;i++){
-          const a=rand(0,TAU), sp=rand(180,360);
-          fx.push({ kind:'spark', x:f.x, y:f.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#c89bff' });
-        }
-        fx.push({ kind:'orbring', x:f.x, y:f.y, r:220, t:0, life:0.5 });
-      }
-    }
   }
   fx = fx.filter(f=>f.t < f.life);
   for (const b of blades) b.t += dt;
@@ -1058,52 +875,6 @@ function drawShot(s){
     ctx.beginPath(); ctx.ellipse(0,0,8,4,0,0,TAU); ctx.fill();
     ctx.fillStyle='rgba(216,54,82,0.7)';
     ctx.beginPath(); ctx.ellipse(0,0,3,1.4,0,0,TAU); ctx.fill();
-  } else if (s.kind==='crow'){
-    // ground shadow at impact point grows as crow descends
-    const dy = s.targetY - s.y;
-    if (dy > 0){
-      ctx.save();
-      ctx.translate(0, dy);
-      const k = Math.max(0.3, 1 - dy/240);
-      ctx.globalAlpha = 0.45 * k;
-      ctx.fillStyle = '#000';
-      ctx.beginPath(); ctx.ellipse(0,0, 14*k, 5*k, 0, 0, TAU); ctx.fill();
-      ctx.restore();
-    }
-    // diving crow silhouette
-    ctx.fillStyle='#0c0814';
-    ctx.beginPath();
-    ctx.moveTo(0,-10); ctx.lineTo(9,-2); ctx.lineTo(15,5); ctx.lineTo(0,9); ctx.lineTo(-15,5); ctx.lineTo(-9,-2); ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle='#e7b53b'; ctx.shadowColor='#e7b53b'; ctx.shadowBlur=6;
-    ctx.beginPath(); ctx.arc(-2,-3,1.2,0,TAU); ctx.arc(2,-3,1.2,0,TAU); ctx.fill();
-  } else if (s.kind==='theorb'){
-    const pulse = 1 + Math.sin(s.pulse*8)*0.18;
-    const fade = Math.min(1, s.life/0.5);  // fade out as it expires
-    ctx.globalAlpha = fade;
-    // outer "step in me" trigger ring
-    ctx.strokeStyle = 'rgba(179,136,255,0.55)';
-    ctx.setLineDash([6,6]); ctx.lineDashOffset = -s.pulse*18;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(0,0, s.triggerR, 0, TAU); ctx.stroke();
-    ctx.setLineDash([]);
-    // glow halo
-    ctx.shadowColor='#b388ff'; ctx.shadowBlur=22*pulse;
-    const grd = ctx.createRadialGradient(0,0,0, 0,0, s.r*pulse*1.4);
-    grd.addColorStop(0,'rgba(220,200,255,0.95)');
-    grd.addColorStop(0.5,'rgba(150,90,240,0.55)');
-    grd.addColorStop(1,'rgba(80,30,180,0)');
-    ctx.fillStyle = grd;
-    ctx.beginPath(); ctx.arc(0,0, s.r*pulse*1.4, 0, TAU); ctx.fill();
-    ctx.shadowBlur=0;
-    // core
-    ctx.fillStyle='#ffffff';
-    ctx.beginPath(); ctx.arc(0,0, s.r*0.35*pulse, 0, TAU); ctx.fill();
-    // tiny twin-link hint (orient toward pair if Lv5+)
-    if (s.pairId){
-      ctx.fillStyle='rgba(255,255,255,0.7)';
-      ctx.beginPath(); ctx.arc(0,0, 2, 0, TAU); ctx.fill();
-    }
   } else if (s.kind==='lantern'){
     const pulse = 1 + Math.sin(game.t*5 + s.x)*0.12;
     const fade = Math.min(1, s.life/0.6);
@@ -1190,42 +961,6 @@ function drawFx(f){
   } else if (f.kind==='spark'){
     ctx.save(); ctx.globalAlpha = 1 - f.t/f.life;
     ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x,f.y,2.5,0,TAU); ctx.fill(); ctx.restore();
-  } else if (f.kind==='orbring'){
-    const k = f.t/f.life;
-    ctx.save(); ctx.globalAlpha = 1 - k;
-    ctx.strokeStyle='#b388ff'; ctx.lineWidth = 4*(1-k) + 1; ctx.shadowColor='#b388ff'; ctx.shadowBlur=18;
-    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.6 + k*0.6), 0, TAU); ctx.stroke();
-    ctx.restore();
-  } else if (f.kind==='beam'){
-    const k = f.t/f.life;
-    ctx.save(); ctx.globalAlpha = 1 - k;
-    ctx.shadowColor='#d6b8ff'; ctx.shadowBlur=18;
-    ctx.strokeStyle='rgba(216,184,255,0.95)'; ctx.lineWidth = 6 * (1-k) + 2;
-    ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
-    ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(f.x1,f.y1); ctx.lineTo(f.x2,f.y2); ctx.stroke();
-    ctx.restore();
-  } else if (f.kind==='singularity'){
-    const k = Math.min(1, f.t/f.life);
-    ctx.save();
-    // dark vortex with concentric inward-spiraling rings
-    ctx.translate(f.x, f.y);
-    const baseR = 160 * (1 - k*0.7);
-    const grd = ctx.createRadialGradient(0,0,2, 0,0,baseR);
-    grd.addColorStop(0, 'rgba(20,8,40,0.95)');
-    grd.addColorStop(0.7, 'rgba(80,40,160,0.35)');
-    grd.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grd; ctx.beginPath(); ctx.arc(0,0,baseR,0,TAU); ctx.fill();
-    ctx.shadowColor='#b388ff'; ctx.shadowBlur=20;
-    ctx.strokeStyle='rgba(180,130,255,0.85)'; ctx.lineWidth=2;
-    for (let i=0;i<3;i++){
-      const r = baseR * (1 - (i*0.3 + k*0.3) % 1);
-      ctx.beginPath(); ctx.arc(0,0, r, 0, TAU); ctx.stroke();
-    }
-    // core
-    ctx.fillStyle='#000';
-    ctx.beginPath(); ctx.arc(0,0, 6 + 8*(1-k), 0, TAU); ctx.fill();
-    ctx.restore();
   } else if (f.kind==='warn'){
     // boss incoming flash text (screen space handled in HUD-ish way)
   }
