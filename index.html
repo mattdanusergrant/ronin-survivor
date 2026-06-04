@@ -248,13 +248,13 @@ const WEAPONS = {
     desc: l => l===0 ? 'Drop a lantern that burns nearby foes.' :
       `Lv ${l+1}: +dmg, larger radius, longer burn.` },
 };
-function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*38, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
-function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*80, count: 1 + Math.floor(l/2), speed: 360 }; }
-function kiStats(l){ return { dmg: 12 + l*8, cd: 1700 - l*120, w: 30 + l*7, speed: 520, range: 360 }; }
+function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*35, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
+function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*70, count: 1 + Math.floor(l/2), speed: 360 }; }
+function kiStats(l){ return { dmg: 14 + l*8, cd: 1500 - l*110, w: 30 + l*7, speed: 520, range: 360 }; }
 function orbitCount(l){ return 1 + Math.floor((l+1)/2); }
-function orbitStats(l){ return { dmg: 6 + l*4, count: orbitCount(l), radius: 64, speed: 2.4 }; }
-function petalStats(l){ return { dmg: 7 + l*4, cd: 1500 - l*110, count: 5 + l*2, speed: 220, range: 240 }; }
-function lanternStats(l){ return { dmg: 4 + l*2, cd: 2200 - l*180, r: 48 + l*7, life: 3.6 + l*0.2 }; }
+function orbitStats(l){ return { dmg: 6 + l*4, count: orbitCount(l), radius: 64, speed: 2.4, hitCd: 0.45 }; }
+function petalStats(l){ return { dmg: 6 + l*3, cd: 1600 - l*100, count: 4 + l*2, speed: 220, range: 240 }; }
+function lanternStats(l){ return { dmg: 5 + l*2, cd: 1900 - l*150, r: 50 + l*8, life: 4.0 + l*0.3 }; }
 
 const PASSIVES = {
   power:  { name:'Whetstone',    ico:'🔪', desc:'+15% all damage',        cap:6, apply:p=>p.power*=1.15 },
@@ -470,7 +470,7 @@ function fireWeapons(dt){
       for (const e of enemies){
         if (node.hit[e._id] && node.hit[e._id] > game.t) continue;
         if (Math.hypot(e.x-ox, e.y-oy) < e.r + 10){
-          node.hit[e._id] = game.t + 0.35;
+          node.hit[e._id] = game.t + s.hitCd;
           damage(e, s.dmg*P.power, e.x-ox, e.y-oy);
         }
       }
