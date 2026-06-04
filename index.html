@@ -286,19 +286,19 @@ function saveSettings(){ try { localStorage.setItem(SETTINGS_KEY, JSON.stringify
 let optionsReturnTo = null;  // remember which overlay to restore on Back
 
 // ---------- THE DOJO (walkable hub) ----------
-const DOJO = { WIDTH: 720, HEIGHT: 520, WALL: 14 };
-// Each station sits on the floor; player overlaps → ENTER prompt appears
+// Portrait room — phones are tall, so the dojo is too.
+const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 const DOJO_STATIONS = [
-  { id:'smithy', name:'Smithy',         ico:'🗡️', x:-230, y:-170, r:34, kind:'shop', group:'combat' },
-  { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-200, r:34, kind:'shop', group:'defense' },
-  { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 230, y:-170, r:34, kind:'shop', group:'utility' },
-  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-220, y: 170, r:34, kind:'game', action:'soccer' },
-  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 220, y: 170, r:34, kind:'game', action:'volley' },
-  { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 200, r:38, kind:'run' },
-  { id:'leave',  name:'Leave Dojo',     ico:'🚪', x:-330, y:   0, r:26, kind:'exit' },
+  { id:'leave',  name:'Leave Dojo',     ico:'🚪', x:-185, y:-390, r:26, kind:'exit' },
+  { id:'smithy', name:'Smithy',         ico:'🗡️', x:-145, y:-300, r:36, kind:'shop', group:'combat' },
+  { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-300, r:36, kind:'shop', group:'defense' },
+  { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 145, y:-300, r:36, kind:'shop', group:'utility' },
+  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-130, y: 290, r:36, kind:'game', action:'soccer' },
+  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 130, y: 290, r:36, kind:'game', action:'volley' },
+  { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 395, r:40, kind:'run' },
 ];
-const DOJO_DUMMIES = [  // training dummy positions
-  { x: 320, y: -60 }, { x: 320, y: 20 }, { x: 320, y: 100 },
+const DOJO_DUMMIES = [  // four dummies stacked along the right wall
+  { x: 180, y: -130 }, { x: 180, y: -45 }, { x: 180, y: 40 }, { x: 180, y: 125 },
 ];
 function startDojo(){
   game = null; soccer = null; volley = null;
@@ -311,7 +311,7 @@ function startDojo(){
            spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
            interactWith: null, lastInteract: 0 };
   player = {
-    x: 0, y: 80, r: 14, hp: 100, maxhp: 100, speed: 148, baseSpeed: 148,
+    x: 0, y: 0, r: 14, hp: 100, maxhp: 100, speed: 148, baseSpeed: 148,
     power: 1, haste: 1, magnet: 1, xpMult: 1, regen: 0,
     inv: 0, hurt: 0, weapons: { katana: 1 }, passives: {}, walkPhase: 0, moving: false,
     armor: 0, revives: 0, ryoMult: 1, bonusWeapons: 0,
@@ -1476,14 +1476,14 @@ function drawStation(s){
     ctx.globalAlpha = 1;
   }
   // icon
-  ctx.font = 'bold 26px -apple-system,sans-serif';
+  ctx.font = 'bold 34px -apple-system,sans-serif';
   ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-  ctx.fillText(s.ico, 0, 9);
+  ctx.fillText(s.ico, 0, 12);
   ctx.shadowBlur = 0;
   // label
-  ctx.font = 'bold 11px -apple-system,sans-serif';
-  ctx.fillStyle = active ? '#fff' : '#c9b890';
-  ctx.fillText(s.name, 0, s.r + 16);
+  ctx.font = 'bold 16px -apple-system,sans-serif';
+  ctx.fillStyle = active ? '#fff' : '#dac8a0';
+  ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
 function drawDummy(e){
