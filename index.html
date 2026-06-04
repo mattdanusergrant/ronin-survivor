@@ -1680,7 +1680,7 @@ const VOLLEY = {
   KICK_UP: 480,
   KICK_FWD: 360,
   SLASH_RANGE: 78,
-  SLASH_ARC: 1.85,
+  SLASH_ARC: 2.8,
   SLASH_CD: 0.30,
   WIN_SCORE: 5,
 };
@@ -1832,22 +1832,36 @@ function volleySlashTick(P, dt, B, dirSign){
   V.rallyCount++;
   V.speedMult = Math.min(2.4, V.speedMult * 1.07);
 
-  const ang = Math.atan2(dby, dbx);
+  // Visual swing: bias the arc angle toward the player's forward direction
+  // (toward opponent) so the sword reads as a back-to-front sweep rather than
+  // a tight cone always pointing at the ball.
+  const ballAng = Math.atan2(dby, dbx);
+  const forwardAng = dirSign > 0 ? 0 : Math.PI;
+  let dAng = ballAng - forwardAng;
+  while (dAng > Math.PI) dAng -= TAU;
+  while (dAng < -Math.PI) dAng += TAU;
+  const ang = forwardAng + dAng * 0.65;     // 65% ball / 35% forward
   P.lastAng = ang;
-  V.blades.push({ kind:'arc', x:P.x, y:P.y, ang, range:VOLLEY.SLASH_RANGE, arc:VOLLEY.SLASH_ARC, t:0, life:0.16, side:1 });
+  V.blades.push({ kind:'arc', x:P.x, y:P.y, ang, range:VOLLEY.SLASH_RANGE, arc:VOLLEY.SLASH_ARC, t:0, life:0.18, side:1 });
 
-  // kick scales with the current rally's speedMult
+  // Directional impulse: ball goes the way the slash points, not always up.
+  // Above the ball → slash points down → SPIKE. Below the ball → slash points up → save.
   const kickUp  = VOLLEY.KICK_UP  * V.speedMult;
   const kickFwd = VOLLEY.KICK_FWD * V.speedMult;
-  B.vy = -kickUp;
-  B.vx = dirSign * kickFwd * 0.7 + (db>0 ? dbx/db*kickFwd*0.3 : 0);
+  const d = Math.max(db, 1);
+  const sx = dbx/d, sy = dby/d;
+  const impulse = kickFwd * 1.5 + kickUp * 0.4;
+  B.vx = sx * impulse * 0.7 + dirSign * kickFwd * 0.55;
+  B.vy = sy * impulse - kickUp * 0.2;        // small base lift so level slashes still arc
+
   B.hit = 0.2;
   V.shake = Math.max(V.shake, 3 + V.speedMult);
   const hot = V.speedMult > 1.5;
-  for (let i=0;i<6;i++){
-    const a=rand(0,TAU), sp=rand(80,160);
+  const isSpike = sy > 0.35;                 // for spike-flavored sparks
+  for (let i=0;i<(isSpike?10:6);i++){
+    const a=rand(0,TAU), sp=rand(80,180);
     V.fxs.push({ kind:'spark', x:B.x, y:B.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
-                 t:0, life:rand(.3,.55), c: hot ? '#ff5a3d' : '#e7b53b' });
+                 t:0, life:rand(.3,.55), c: isSpike ? '#ff5a3d' : (hot ? '#ff8a3d' : '#e7b53b') });
   }
 }
 
