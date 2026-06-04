@@ -111,6 +111,21 @@
   .up.poor .ucost{color:#7a4a45;}
   .dojo-stats{font-size:11px; color:var(--dim); display:flex; gap:14px; flex-wrap:wrap; justify-content:center; max-width:420px;}
   .dojo-stats b{color:var(--bone);}
+
+  /* dojo hub overlays (HUD + interact button) */
+  #dojo-hud{position:absolute; top:8px; left:0; right:0; padding:8px 12px; pointer-events:none;
+    display:flex; justify-content:space-between; align-items:center; z-index:15;}
+  #dojo-hud .ryoline{background:rgba(20,18,12,0.78); border:1px solid #4a3a14; border-radius:8px;
+    padding:6px 12px;}
+  #dojo-hud .htext{font-size:12px; color:var(--dim); letter-spacing:1px;
+    background:rgba(20,18,12,0.55); border:1px solid var(--line); border-radius:8px; padding:6px 10px;}
+  #dojo-interact{position:absolute; bottom:24px; left:50%; transform:translateX(-50%);
+    pointer-events:auto; cursor:pointer; z-index:16;
+    background:var(--blood); border:1px solid #ffcb6b; color:#fff;
+    font-size:14px; font-weight:700; letter-spacing:2px; padding:12px 28px;
+    border-radius:10px; text-transform:uppercase; box-shadow:0 4px 18px rgba(216,54,43,0.45);
+    transition:transform .08s, background .15s;}
+  #dojo-interact:active{transform:translateX(-50%) scale(.96); background:#7a1f1a;}
 </style>
 </head>
 <body>
@@ -123,6 +138,13 @@
     <div class="bar"><i id="xpfill"></i></div>
   </div>
   <div id="pausebtn" class="hidden">II</div>
+
+  <!-- Dojo Hub HUD (in-scene) -->
+  <div id="dojo-hud" class="hidden">
+    <div class="ryoline" id="dojo-hud-ryo">🪙 <b>0</b> Ryo</div>
+    <div class="htext" id="dojo-hud-hint">The Dojo</div>
+  </div>
+  <div id="dojo-interact" class="hidden">ENTER</div>
 
   <!-- Title -->
   <div id="title" class="overlay">
@@ -262,6 +284,65 @@ const SETTINGS = (function(){
 })();
 function saveSettings(){ try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); } catch {} }
 let optionsReturnTo = null;  // remember which overlay to restore on Back
+
+// ---------- THE DOJO (walkable hub) ----------
+const DOJO = { WIDTH: 720, HEIGHT: 520, WALL: 14 };
+// Each station sits on the floor; player overlaps → ENTER prompt appears
+const DOJO_STATIONS = [
+  { id:'smithy', name:'Smithy',         ico:'🗡️', x:-230, y:-170, r:34, kind:'shop', group:'combat' },
+  { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-200, r:34, kind:'shop', group:'defense' },
+  { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 230, y:-170, r:34, kind:'shop', group:'utility' },
+  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-220, y: 170, r:34, kind:'game', action:'soccer' },
+  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 220, y: 170, r:34, kind:'game', action:'volley' },
+  { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 200, r:38, kind:'run' },
+  { id:'leave',  name:'Leave Dojo',     ico:'🚪', x:-330, y:   0, r:26, kind:'exit' },
+];
+const DOJO_DUMMIES = [  // training dummy positions
+  { x: 320, y: -60 }, { x: 320, y: 20 }, { x: 320, y: 100 },
+];
+function startDojo(){
+  game = null; soccer = null; volley = null;
+  elHud.classList.add('hidden');
+  elPauseBtn.classList.add('hidden');  // no pause in the dojo
+  D('dojo-hud').classList.remove('hidden');
+  D('dojo-interact').classList.add('hidden');
+  // game state — peaceful dojo mode
+  game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 5,
+           spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
+           interactWith: null, lastInteract: 0 };
+  player = {
+    x: 0, y: 80, r: 14, hp: 100, maxhp: 100, speed: 148, baseSpeed: 148,
+    power: 1, haste: 1, magnet: 1, xpMult: 1, regen: 0,
+    inv: 0, hurt: 0, weapons: { katana: 1 }, passives: {}, walkPhase: 0, moving: false,
+    armor: 0, revives: 0, ryoMult: 1, bonusWeapons: 0,
+  };
+  applyMeta(player);                  // dojo player has all your perks — test the build!
+  enemies = []; orbs = []; shots = []; blades = []; fx = []; petals = []; shake = 0;
+  // training dummies
+  for (const d of DOJO_DUMMIES){
+    enemies.push({ x:d.x, y:d.y, r:14, hp:200, maxhp:200, speed:0, dmg:0, xp:0,
+      color:'#5a4520', hit:0, boss:false, sep:0, state:'wander', sight:0, callR:0,
+      wDir:0, wTimer:9999, wSpeed:0, alertT:0, chargeT:0, chargeCheckT:9999,
+      dummy:true, respawnT:0 });
+  }
+  rebuildOrbit();
+  for (let i=0;i<14;i++) petals.push({
+    x:rand(-DOJO.WIDTH/2, DOJO.WIDTH/2), y:rand(-DOJO.HEIGHT/2, DOJO.HEIGHT/2),
+    s:rand(.5,1.1), vx:rand(-12,-22), vy:rand(20,38), rot:rand(0,TAU), vr:rand(-2,2)
+  });
+  refreshDojoHud();
+  showOnly(null);
+}
+function refreshDojoHud(){
+  D('dojo-hud-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
+  D('dojo-hud-hint').textContent = 'Walk to a station';
+}
+function leaveDojo(){
+  game = null;
+  D('dojo-hud').classList.add('hidden');
+  D('dojo-interact').classList.add('hidden');
+  showOnly(elTitle);
+}
 
 // ---------- META PROGRESSION (The Dojo) ----------
 // Persistent Ryo currency + permanent upgrades bought between runs.
@@ -526,10 +607,19 @@ function spawnEnemy(boss=false, distOverride=null){
 //  DAMAGE / DEATH
 // =====================================================================
 function damage(e, dmg, kx=0, ky=0){
+  if (e.dummy && (e.respawnT > 0 || e.hp <= 0)) return;  // can't hit a downed dummy
   e.hp -= dmg; e.hit = 0.12;
-  if (kx||ky){ const l=Math.hypot(kx,ky)||1; e.x += kx/l*6; e.y += ky/l*6; }
+  if (kx||ky && !e.dummy){ const l=Math.hypot(kx,ky)||1; e.x += kx/l*6; e.y += ky/l*6; }
   fx.push({ kind:'dmg', x:e.x, y:e.y-e.r-4, v:Math.round(dmg), t:0, life:.6, vy:-26 });
-  if (e.hp <= 0) killEnemy(e);
+  if (e.hp <= 0){
+    if (e.dummy){
+      e.hp = 0; e.respawnT = 1.2;
+      for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(80,160);
+        fx.push({ kind:'spark', x:e.x, y:e.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.5), c:'#bca580' }); }
+      return;
+    }
+    killEnemy(e);
+  }
 }
 function killEnemy(e){
   e.dead = true; game.kills++;
@@ -854,25 +944,45 @@ function update(dt){
   if (P.moving){ lastAng = Math.atan2(v.y, v.x); P.walkPhase += dt*12; }
   P.x += v.x * P.speed * dt;
   P.y += v.y * P.speed * dt;
-  game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
-  game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
+  if (game.dojoMode){
+    // clamp to dojo room
+    const hw = DOJO.WIDTH/2 - P.r - DOJO.WALL;
+    const hh = DOJO.HEIGHT/2 - P.r - DOJO.WALL;
+    P.x = clamp(P.x, -hw, hw);
+    P.y = clamp(P.y, -hh, hh);
+    game.cam.x = 0; game.cam.y = 0;       // fixed camera
+  } else {
+    game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
+    game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
+  }
 
   // regen + timers
   if (P.regen) P.hp = Math.min(P.maxhp, P.hp + P.regen*dt);
   if (P.inv>0) P.inv -= dt;
   if (P.hurt>0) P.hurt -= dt;
 
-  // spawning
-  game.spawnAcc += dt;
-  const want = spawnInterval();
-  while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
-  game.bossT += dt;
-  if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
+  // spawning (skip in dojo — peaceful)
+  if (!game.dojoMode){
+    game.spawnAcc += dt;
+    const want = spawnInterval();
+    while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
+    game.bossT += dt;
+    if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
+  }
 
   // enemies — state machine (wander → alert → chase) + group charge + contact
   for (const e of enemies){
     if (!e._id){ e._id = _eid++; }
     if (e.hit>0) e.hit -= dt;
+
+    // training dummies: don't move, don't attack — just respawn after death
+    if (e.dummy){
+      if (e.respawnT > 0){
+        e.respawnT -= dt;
+        if (e.respawnT <= 0) e.hp = e.maxhp;
+      }
+      continue;
+    }
 
     const dx = P.x-e.x, dy = P.y-e.y, d = Math.hypot(dx,dy) || 1;
 
@@ -932,12 +1042,14 @@ function update(dt){
       }
     }
   }
-  // light separation so they don't fully stack
-  for (let i=0;i<enemies.length;i++){
-    const a=enemies[i];
-    for (let j=i+1;j<enemies.length;j++){
-      const b=enemies[j], dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy), min=a.r+b.r;
-      if (d>0 && d<min){ const p=(min-d)/d*0.5; a.x-=dx*p; a.y-=dy*p; b.x+=dx*p; b.y+=dy*p; }
+  // light separation so they don't fully stack (skip in dojo — dummies are fixed)
+  if (!game.dojoMode){
+    for (let i=0;i<enemies.length;i++){
+      const a=enemies[i];
+      for (let j=i+1;j<enemies.length;j++){
+        const b=enemies[j], dx=b.x-a.x, dy=b.y-a.y, d=Math.hypot(dx,dy), min=a.r+b.r;
+        if (d>0 && d<min){ const p=(min-d)/d*0.5; a.x-=dx*p; a.y-=dy*p; b.x+=dx*p; b.y+=dy*p; }
+      }
     }
   }
 
@@ -1113,9 +1225,10 @@ function update(dt){
     if (d < P.r + 6){ o.got=true; gainXP(o.xp); }
   }
   orbs = orbs.filter(o=>!o.got);
-  // drop dead enemies and cull strays that wandered too far from the player
+  // drop dead enemies and cull strays that wandered too far (dummies are immortal)
   const cullR2 = 1100 * 1100;
   enemies = enemies.filter(e => {
+    if (e.dummy) return true;
     if (e.dead) return false;
     if (e.boss) return true;
     const dx = e.x - player.x, dy = e.y - player.y;
@@ -1141,7 +1254,51 @@ function update(dt){
   }
 
   if (shake>0) shake = Math.max(0, shake - dt*40);
+
+  // dojo: detect station overlap → show ENTER prompt
+  if (game.dojoMode) updateDojoStations();
 }
+
+function updateDojoStations(){
+  const P = player;
+  let near = null, bestD2 = Infinity;
+  for (const s of DOJO_STATIONS){
+    const dx = s.x-P.x, dy = s.y-P.y;
+    const rr = s.r + P.r;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < rr*rr && d2 < bestD2){ bestD2 = d2; near = s; }
+  }
+  if (near !== game.interactWith){
+    game.interactWith = near;
+    const btn = D('dojo-interact');
+    if (near){
+      btn.textContent = (near.kind==='exit' ? 'LEAVE — ' : 'ENTER — ') + near.name;
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
+  }
+}
+function dojoActivate(){
+  if (!game || !game.dojoMode || !game.interactWith) return;
+  const s = game.interactWith;
+  // tiny debounce so a held key/button can't double-fire
+  const now = performance.now();
+  if (game.lastInteract && now - game.lastInteract < 200) return;
+  game.lastInteract = now || 1;
+  if (s.kind === 'shop')  { openDojoShop(s.group); return; }
+  if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
+  if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
+  if (s.kind === 'run')  { exitDojoTo(()=>newGame()); return; }
+  if (s.kind === 'exit') { leaveDojo(); return; }
+}
+function exitDojoTo(fn){
+  D('dojo-hud').classList.add('hidden');
+  D('dojo-interact').classList.add('hidden');
+  cameFromDojo = true;
+  fn();
+}
+let cameFromDojo = false;
 
 function gainXP(n){
   game.xp += n * player.xpMult;
@@ -1214,15 +1371,21 @@ function draw(){
 
   if (!game){ ctx.restore(); return; }
 
-  // center on screen, apply zoom-out, then place camera in world space
+  // center on screen, apply zoom-out, then place camera in world space.
+  // In the dojo we zoom to fit the whole room (with some HUD padding).
+  let vs = viewScale;
+  if (game.dojoMode){
+    vs = Math.min(1, Math.min((W - 24) / DOJO.WIDTH, (H - 110) / DOJO.HEIGHT));
+  }
   ctx.translate(W/2 + sx, H/2 + sy);
-  ctx.scale(viewScale, viewScale);
+  ctx.scale(vs, vs);
   ctx.translate(-game.cam.x, -game.cam.y);
 
-  const VW = W/viewScale, VH = H/viewScale;
+  const VW = W/vs, VH = H/vs;
   const camX = game.cam.x - VW/2, camY = game.cam.y - VH/2;
 
-  drawGround(camX, camY, VW, VH);
+  if (game.dojoMode) drawDojoRoom();
+  else drawGround(camX, camY, VW, VH);
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
 
@@ -1270,6 +1433,99 @@ function drawGround(camX, camY, VW, VH){
   ctx.fillStyle = grd; ctx.fillRect(camX,camY,VW,VH);
 }
 
+function drawDojoRoom(){
+  // dark dirt floor
+  ctx.fillStyle = '#1a1318';
+  ctx.fillRect(-DOJO.WIDTH/2, -DOJO.HEIGHT/2, DOJO.WIDTH, DOJO.HEIGHT);
+  // tatami-ish floor grid
+  ctx.strokeStyle = 'rgba(220,180,120,0.06)'; ctx.lineWidth = 1/viewScale;
+  const g = 56;
+  for (let x=-DOJO.WIDTH/2+g; x<DOJO.WIDTH/2; x+=g){
+    ctx.beginPath(); ctx.moveTo(x, -DOJO.HEIGHT/2); ctx.lineTo(x, DOJO.HEIGHT/2); ctx.stroke();
+  }
+  for (let y=-DOJO.HEIGHT/2+g; y<DOJO.HEIGHT/2; y+=g){
+    ctx.beginPath(); ctx.moveTo(-DOJO.WIDTH/2, y); ctx.lineTo(DOJO.WIDTH/2, y); ctx.stroke();
+  }
+  // red-sun centerpiece
+  const grd = ctx.createRadialGradient(0,0,20, 0,0, 280);
+  grd.addColorStop(0,'rgba(216,54,43,0.10)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = grd; ctx.fillRect(-DOJO.WIDTH/2, -DOJO.HEIGHT/2, DOJO.WIDTH, DOJO.HEIGHT);
+  // wall frame
+  ctx.strokeStyle = '#5a4520'; ctx.lineWidth = 8;
+  ctx.strokeRect(-DOJO.WIDTH/2, -DOJO.HEIGHT/2, DOJO.WIDTH, DOJO.HEIGHT);
+  ctx.strokeStyle = '#3a2f18'; ctx.lineWidth = 2;
+  ctx.strokeRect(-DOJO.WIDTH/2+8, -DOJO.HEIGHT/2+8, DOJO.WIDTH-16, DOJO.HEIGHT-16);
+  // station markers
+  for (const s of DOJO_STATIONS) drawStation(s);
+}
+function drawStation(s){
+  ctx.save(); ctx.translate(s.x, s.y);
+  const active = game && game.interactWith === s;
+  const t = (game ? game.t : 0);
+  // floor pad
+  ctx.fillStyle = active ? 'rgba(231,181,59,0.30)' : 'rgba(89,69,32,0.40)';
+  ctx.strokeStyle = active ? '#e7b53b' : 'rgba(120,90,40,0.85)';
+  ctx.lineWidth = active ? 3 : 2;
+  ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill(); ctx.stroke();
+  // pulse ring when active
+  if (active){
+    const k = (t*2) % 1;
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#e7b53b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0,0, s.r * (1 + k*0.6), 0, TAU); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // icon
+  ctx.font = 'bold 26px -apple-system,sans-serif';
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.fillText(s.ico, 0, 9);
+  ctx.shadowBlur = 0;
+  // label
+  ctx.font = 'bold 11px -apple-system,sans-serif';
+  ctx.fillStyle = active ? '#fff' : '#c9b890';
+  ctx.fillText(s.name, 0, s.r + 16);
+  ctx.restore();
+}
+function drawDummy(e){
+  ctx.save(); ctx.translate(e.x, e.y);
+  const flash = e.hit > 0;
+  const down  = e.respawnT > 0;
+  // ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(0, e.r*0.7, e.r*0.85, e.r*0.3, 0, 0, TAU); ctx.fill();
+  if (down){
+    // tipped-over post (rotated 35°)
+    ctx.rotate(0.6);
+    ctx.fillStyle = '#3a2a14';
+    ctx.fillRect(-e.r*1.6, -e.r*0.4, e.r*3.2, e.r*0.8);
+    ctx.strokeStyle = '#1a1108'; ctx.lineWidth = 1;
+    ctx.strokeRect(-e.r*1.6, -e.r*0.4, e.r*3.2, e.r*0.8);
+  } else {
+    // post body
+    ctx.fillStyle = flash ? '#fff' : '#5a4520';
+    ctx.fillRect(-e.r*0.85, -e.r*1.5, e.r*1.7, e.r*2.3);
+    ctx.strokeStyle = '#2a1f10'; ctx.lineWidth = 1;
+    ctx.strokeRect(-e.r*0.85, -e.r*1.5, e.r*1.7, e.r*2.3);
+    // wood grain hint
+    ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+    ctx.beginPath(); ctx.moveTo(-e.r*0.4, -e.r*1.5); ctx.lineTo(-e.r*0.4, e.r*0.8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo( e.r*0.4, -e.r*1.5); ctx.lineTo( e.r*0.4, e.r*0.8); ctx.stroke();
+    // paper target — three concentric rings
+    ctx.fillStyle = '#f2efe6';
+    ctx.beginPath(); ctx.arc(0, -e.r*0.5, e.r*0.75, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#d8362b';
+    ctx.beginPath(); ctx.arc(0, -e.r*0.5, e.r*0.50, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#f2efe6';
+    ctx.beginPath(); ctx.arc(0, -e.r*0.5, e.r*0.22, 0, TAU); ctx.fill();
+    // HP bar above
+    const hpPct = Math.max(0, e.hp/e.maxhp);
+    ctx.fillStyle = '#000'; ctx.fillRect(-e.r, -e.r*2.1, e.r*2, 3);
+    ctx.fillStyle = hpPct > 0.5 ? '#5fb867' : (hpPct > 0.2 ? '#e7b53b' : '#d8362b');
+    ctx.fillRect(-e.r, -e.r*2.1, e.r*2 * hpPct, 3);
+  }
+  ctx.restore();
+}
+
 function drawPetal(pt){
   ctx.save(); ctx.translate(pt.x,pt.y); ctx.rotate(pt.rot); ctx.scale(pt.s,pt.s);
   ctx.fillStyle = 'rgba(216,54,43,0.35)';
@@ -1288,6 +1544,7 @@ function drawOrb(o){
 }
 
 function drawEnemy(e){
+  if (e.dummy){ drawDummy(e); return; }
   ctx.save(); ctx.translate(e.x,e.y);
   const flash = e.hit>0;
   const charging = e.chargeT > 0;
@@ -1626,7 +1883,7 @@ function togglePause(){
     else if (soccer.state === 'paused'){ soccer.state = 'play'; showOnly(null); }
     return;
   }
-  if (!game) return;
+  if (!game || game.dojoMode) return;   // no pause in the walkable dojo
   if (game.state===STATE.PLAY){ game.state=STATE.PAUSED; showOnly(elPaused); }
   else if (game.state===STATE.PAUSED){ game.state=STATE.PLAY; showOnly(null); }
 }
@@ -2391,10 +2648,16 @@ elPauseBtn.onclick = togglePause;
 // ---------- soccer / volleyball wiring ----------
 D('opt-soccer').onclick = ()=>{ startSoccer(); };
 D('soccer-again').onclick = ()=>{ startSoccer(); };
-D('soccer-back').onclick = ()=>{ soccer=null; elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
+D('soccer-back').onclick = ()=>{
+  soccer=null; elPauseBtn.classList.add('hidden');
+  if (cameFromDojo){ cameFromDojo = false; startDojo(); } else showOnly(elTitle);
+};
 D('opt-volley').onclick = ()=>{ startVolley(); };
 D('volley-again').onclick = ()=>{ startVolley(); };
-D('volley-back').onclick = ()=>{ volley=null; elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
+D('volley-back').onclick = ()=>{
+  volley=null; elPauseBtn.classList.add('hidden');
+  if (cameFromDojo){ cameFromDojo = false; startDojo(); } else showOnly(elTitle);
+};
 
 // ---------- options menu ----------
 function refreshOptionsUI(){
@@ -2414,12 +2677,21 @@ D('opt-joystick').onclick = ()=>{
   refreshOptionsUI();
 };
 
-// ---------- The Dojo ----------
+// ---------- The Dojo (shop overlay) ----------
+// Stations in the walkable dojo open this filtered to their category.
+const DOJO_SHOP_GROUPS = {
+  combat:  ['might','warblade','prodigy'],
+  defense: ['vitality','armor','recovery','tenacity'],
+  utility: ['swift','haste','magnet','fortune','avarice'],
+};
+let dojoShopFilter = null;  // null = show all
 function renderDojo(){
   D('dojo-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
   const grid = D('dojo-grid');
   grid.innerHTML = '';
+  const allowed = dojoShopFilter ? new Set(DOJO_SHOP_GROUPS[dojoShopFilter] || []) : null;
   for (const id in META_UPGRADES){
+    if (allowed && !allowed.has(id)) continue;
     const u = META_UPGRADES[id];
     const lvl = metaLvl(id);
     const maxed = lvl >= u.max;
@@ -2458,10 +2730,32 @@ function buyUpgrade(id){
   saveMeta();
   renderDojo();
 }
-function openDojo(from){ optionsReturnTo = from; renderDojo(); showOnly(elDojo); }
-D('dojo-from-title').onclick = ()=> openDojo(elTitle);
-D('over-dojo').onclick = ()=> openDojo(elTitle);
-D('dojo-back').onclick = ()=> showOnly(optionsReturnTo || elTitle);
+// open the shop overlay with an optional group filter (walkable-dojo stations call this)
+function openDojoShop(group){
+  dojoShopFilter = group || null;
+  renderDojo();
+  showOnly(elDojo);
+}
+// keep the legacy entrypoint working — opens the full shop with no filter
+function openDojo(from){ optionsReturnTo = from; openDojoShop(null); }
+// Title's Dojo button now ENTERS THE HUB (walkable scene)
+D('dojo-from-title').onclick = ()=> startDojo();
+D('over-dojo').onclick      = ()=> startDojo();
+// Shop "Back": if we're inside the walkable hub, return to it; otherwise to title
+D('dojo-back').onclick = ()=>{
+  if (game && game.dojoMode){
+    D('dojo-hud').classList.remove('hidden');
+    refreshDojoHud();
+    showOnly(null);
+  } else {
+    showOnly(optionsReturnTo || elTitle);
+  }
+};
+// the in-scene ENTER button + Enter/Space keys activate the focused station
+D('dojo-interact').onclick = ()=> dojoActivate();
+addEventListener('keydown', e=>{
+  if (game && game.dojoMode && (e.key==='Enter' || e.key===' ' || e.key.toLowerCase()==='e')) dojoActivate();
+});
 D('dojo-reset').onclick = ()=>{
   if (!confirm('Reset ALL Dojo progress and Ryo? This cannot be undone.')) return;
   META.ryo = 0; META.up = {}; META.runs = 0; META.bestTime = 0;
