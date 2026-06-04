@@ -135,7 +135,17 @@
     <div class="opts">
       <div class="opt" id="opt-joystick"><span>Show on-screen joystick</span><span class="sw"></span></div>
     </div>
+    <div class="btn btn-sec" id="opt-soccer" style="margin-top:8px">⚽ Samurai Soccer</div>
     <div class="btn" id="opt-back">Back</div>
+  </div>
+
+  <!-- Soccer match end -->
+  <div id="soccer-over" class="overlay hidden">
+    <div class="tag" id="soccer-tag">Full Time</div>
+    <h1 id="soccer-ttl" style="font-size:30px">VICTORY</h1>
+    <div class="stats" id="soccer-stats"></div>
+    <div class="btn" id="soccer-again">Rematch</div>
+    <div class="btn btn-sec" id="soccer-back">Main Menu</div>
   </div>
 
   <!-- Game over -->
@@ -185,7 +195,7 @@ function angDiff(a, b){ let d = (a - b) % TAU; if (d > Math.PI) d -= TAU; if (d 
 const D = id => document.getElementById(id);
 const elHud = D('hud'), elPauseBtn = D('pausebtn');
 const elTitle = D('title'), elLevelup = D('levelup'), elPaused = D('paused'), elOver = D('over');
-const elOptions = D('options');
+const elOptions = D('options'), elSoccerOver = D('soccer-over');
 
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
@@ -303,7 +313,11 @@ function pMove(x,y){
   stick.dx = dx/max; stick.dy = dy/max;
 }
 function pEnd(){ stick.on=false; stick.dx=0; stick.dy=0; }
-cv.addEventListener('pointerdown', e=>{ if (game && game.state===STATE.PLAY){ cv.setPointerCapture(e.pointerId); pStart(e.clientX,e.clientY); } });
+cv.addEventListener('pointerdown', e=>{
+  const inMain = game && game.state===STATE.PLAY;
+  const inSoccer = soccer && soccer.state === 'play';
+  if (inMain || inSoccer){ cv.setPointerCapture(e.pointerId); pStart(e.clientX,e.clientY); }
+});
 cv.addEventListener('pointermove', e=>{ if (stick.on) pMove(e.clientX,e.clientY); });
 cv.addEventListener('pointerup', pEnd);
 cv.addEventListener('pointercancel', pEnd);
@@ -1103,7 +1117,9 @@ function drawShot(s){
 function drawArc(b){
   const k = b.t / b.life;                 // 0..1
   const a0 = b.ang - b.arc/2, sweep = b.arc;
-  ctx.save(); ctx.translate(player.x, player.y);
+  const ox = (b.x !== undefined) ? b.x : player.x;
+  const oy = (b.y !== undefined) ? b.y : player.y;
+  ctx.save(); ctx.translate(ox, oy);
   ctx.globalAlpha = (1-k)*0.9;
   ctx.lineWidth = 4 + (1-k)*4;
   ctx.strokeStyle = '#ffffff'; ctx.shadowColor='#d8362b'; ctx.shadowBlur=12;
@@ -1237,10 +1253,15 @@ function updateHud(){
 //  FLOW
 // =====================================================================
 function showOnly(el){
-  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions]) o.classList.add('hidden');
+  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
 }
 function togglePause(){
+  if (soccer){
+    if (soccer.state === 'play'){ soccer.state = 'paused'; showOnly(elPaused); }
+    else if (soccer.state === 'paused'){ soccer.state = 'play'; showOnly(null); }
+    return;
+  }
   if (!game) return;
   if (game.state===STATE.PLAY){ game.state=STATE.PAUSED; showOnly(elPaused); }
   else if (game.state===STATE.PAUSED){ game.state=STATE.PLAY; showOnly(null); }
@@ -1264,9 +1285,375 @@ function gameOver(win){
 //  MAIN LOOP
 // =====================================================================
 let last = performance.now();
+// =====================================================================
+//  SAMURAI SOCCER — 2D top-down mini-game, portrait field, 1v1 with AI
+// =====================================================================
+let soccer = null;
+const SOCCER = {
+  FIELD_X: 200, FIELD_Y: 350,         // half-extents
+  GOAL_W: 60,                          // half-width of goal mouth
+  BALL_R: 12,
+  PLAYER_R: 14,
+  PLAYER_SPEED: 210,
+  AI_SPEED: 175,
+  MATCH_TIME: 180,                     // seconds
+  KICK_FORCE: 620,                     // katana-slash impulse on ball
+  COLLIDE_IMPULSE: 80,                 // soft push when body bumps ball
+  SLASH_CD: 0.40,
+  SLASH_RANGE: 70,
+  SLASH_ARC: 1.7,                      // ~97° cone
+  BALL_FRICTION: 0.42,                 // per-second damping factor
+};
+
+function startSoccer(){
+  game = null;                         // exit main game if active
+  elHud.classList.add('hidden');
+  elPauseBtn.classList.remove('hidden');
+  soccer = {
+    state: 'play', t: 0,
+    score: [0, 0],                     // [you, opponent]
+    ball: { x:0, y:0, r:SOCCER.BALL_R, vx:0, vy:0, hit:0 },
+    player: { x:0, y: 220, r:SOCCER.PLAYER_R, lastAng:-Math.PI/2, slashCd:0, walkPhase:0, moving:false, hurt:0 },
+    ai:     { x:0, y:-220, r:SOCCER.PLAYER_R, lastAng: Math.PI/2,  slashCd:0, walkPhase:0, moving:false, hurt:0 },
+    blades: [], fxs: [],
+    petals: [],
+    shake: 0,
+    goalCd: 0,                          // brief pause after a goal
+    lastScorer: -1,
+  };
+  for (let i=0;i<22;i++) soccer.petals.push({
+    x:rand(-SOCCER.FIELD_X, SOCCER.FIELD_X), y:rand(-SOCCER.FIELD_Y, SOCCER.FIELD_Y),
+    s:rand(.5,1.2), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2)
+  });
+  showOnly(null);
+}
+
+function updateSoccer(dt){
+  const S = soccer;
+  if (S.state !== 'play') return;
+  S.t += dt;
+  if (S.goalCd > 0){ S.goalCd -= dt; }
+  if (S.t >= SOCCER.MATCH_TIME){ endSoccerMatch(); return; }
+
+  // input → player
+  const v = inputVec();
+  const P = S.player;
+  P.moving = !!(v.x || v.y);
+  if (P.moving){ P.lastAng = Math.atan2(v.y, v.x); P.walkPhase += dt*12; }
+  P.x = clamp(P.x + v.x * SOCCER.PLAYER_SPEED * dt, -SOCCER.FIELD_X+P.r, SOCCER.FIELD_X-P.r);
+  P.y = clamp(P.y + v.y * SOCCER.PLAYER_SPEED * dt, -SOCCER.FIELD_Y+P.r, SOCCER.FIELD_Y-P.r);
+
+  // AI: position behind ball relative to its own goal (top, y = -FIELD_Y), then chase
+  const A = S.ai, B = S.ball;
+  const gx = 0, gy = -SOCCER.FIELD_Y;
+  const bgx = B.x - gx, bgy = B.y - gy, bg = Math.hypot(bgx, bgy) || 1;
+  const offset = 22 + Math.min(40, Math.hypot(B.vx, B.vy) * 0.08);
+  let tx = B.x + bgx/bg * offset, ty = B.y + bgy/bg * offset;
+  // if AI is behind its own goal line of the ball, just chase
+  if (A.y > B.y - 30){ tx = B.x; ty = B.y - 18; }
+  const adx = tx - A.x, ady = ty - A.y, ad = Math.hypot(adx,ady);
+  if (ad > 2){
+    A.moving = true;
+    A.x = clamp(A.x + adx/ad * SOCCER.AI_SPEED * dt, -SOCCER.FIELD_X+A.r, SOCCER.FIELD_X-A.r);
+    A.y = clamp(A.y + ady/ad * SOCCER.AI_SPEED * dt, -SOCCER.FIELD_Y+A.r, SOCCER.FIELD_Y-A.r);
+    A.lastAng = Math.atan2(ady, adx);
+    A.walkPhase += dt*12;
+  } else A.moving = false;
+
+  // ball physics
+  if (S.goalCd <= 0){
+    B.x += B.vx * dt; B.y += B.vy * dt;
+    const damp = Math.pow(SOCCER.BALL_FRICTION, dt);
+    B.vx *= damp; B.vy *= damp;
+    // side walls
+    if (B.x < -SOCCER.FIELD_X+B.r){ B.x = -SOCCER.FIELD_X+B.r; B.vx = -B.vx*0.7; }
+    if (B.x >  SOCCER.FIELD_X-B.r){ B.x =  SOCCER.FIELD_X-B.r; B.vx = -B.vx*0.7; }
+    // top/bottom — bounce only outside the goal mouth
+    const inGoalCol = Math.abs(B.x) < SOCCER.GOAL_W;
+    if (!inGoalCol){
+      if (B.y < -SOCCER.FIELD_Y+B.r){ B.y = -SOCCER.FIELD_Y+B.r; B.vy = -B.vy*0.7; }
+      if (B.y >  SOCCER.FIELD_Y-B.r){ B.y =  SOCCER.FIELD_Y-B.r; B.vy = -B.vy*0.7; }
+    }
+  }
+  if (B.hit > 0) B.hit -= dt;
+
+  // body-ball collision (light push) and body-body
+  resolveSoccerBallBody(B, P);
+  resolveSoccerBallBody(B, A);
+  resolveSoccerBodies(P, A);
+
+  // auto-slash for both samurai if ball (or opponent) in reach
+  soccerSlashTick(P, dt, A, +1);
+  soccerSlashTick(A, dt, P, -1);
+
+  // goal check (only when ball fully crosses goal line)
+  if (S.goalCd <= 0){
+    if (Math.abs(B.x) < SOCCER.GOAL_W){
+      if (B.y - B.r < -SOCCER.FIELD_Y){ soccerGoal(0); return; }
+      if (B.y + B.r >  SOCCER.FIELD_Y){ soccerGoal(1); return; }
+    }
+  }
+
+  // blades + fx + petals
+  for (const b of S.blades) b.t += dt;
+  S.blades = S.blades.filter(b => b.t < b.life);
+  for (const f of S.fxs){
+    f.t += dt;
+    if (f.kind==='spark'){ f.x+=f.vx*dt; f.y+=f.vy*dt; f.vx*=0.92; f.vy*=0.92; }
+    if (f.kind==='dmg') f.y += f.vy*dt;
+  }
+  S.fxs = S.fxs.filter(f => f.t < f.life);
+  for (const pt of S.petals){
+    pt.x += pt.vx*dt; pt.y += pt.vy*dt; pt.rot += pt.vr*dt;
+    if (pt.y > SOCCER.FIELD_Y+20){ pt.y = -SOCCER.FIELD_Y-20; pt.x = rand(-SOCCER.FIELD_X, SOCCER.FIELD_X); }
+    if (pt.x < -SOCCER.FIELD_X-20){ pt.x = SOCCER.FIELD_X+20; }
+  }
+  if (S.shake>0) S.shake = Math.max(0, S.shake - dt*40);
+  if (S.player.hurt > 0) S.player.hurt -= dt;
+  if (S.ai.hurt > 0)     S.ai.hurt     -= dt;
+}
+
+function resolveSoccerBallBody(B, P){
+  const dx = B.x - P.x, dy = B.y - P.y, d = Math.hypot(dx,dy);
+  const min = B.r + P.r;
+  if (d > 0 && d < min){
+    const k = (min - d) / d;
+    B.x += dx * k; B.y += dy * k;
+    B.vx += dx/d * SOCCER.COLLIDE_IMPULSE;
+    B.vy += dy/d * SOCCER.COLLIDE_IMPULSE;
+    B.hit = 0.1;
+  }
+}
+function resolveSoccerBodies(A, B){
+  const dx = B.x - A.x, dy = B.y - A.y, d = Math.hypot(dx,dy);
+  const min = A.r + B.r;
+  if (d > 0 && d < min){
+    const p = (min - d) / d * 0.5;
+    A.x -= dx * p; A.y -= dy * p;
+    B.x += dx * p; B.y += dy * p;
+  }
+}
+
+function soccerSlashTick(P, dt, opponent, /*team*/team){
+  const S = soccer;
+  if (P.slashCd > 0) P.slashCd -= dt;
+  if (P.slashCd > 0) return;
+  // target: prefer ball if close enough, else opponent if close
+  const B = S.ball;
+  const dbx = B.x - P.x, dby = B.y - P.y, db = Math.hypot(dbx, dby);
+  const dox = opponent.x - P.x, doy = opponent.y - P.y, doo = Math.hypot(dox, doy);
+  let tx, ty, d;
+  if (db < SOCCER.SLASH_RANGE + B.r){ tx = dbx; ty = dby; d = db; }
+  else if (doo < SOCCER.SLASH_RANGE + opponent.r){ tx = dox; ty = doy; d = doo; }
+  else return;
+
+  P.slashCd = SOCCER.SLASH_CD;
+  const ang = Math.atan2(ty, tx);
+  P.lastAng = ang;
+  S.blades.push({ kind:'arc', x:P.x, y:P.y, ang, range:SOCCER.SLASH_RANGE, arc:SOCCER.SLASH_ARC, t:0, life:0.16, side:1 });
+
+  // hit ball if inside cone
+  if (db < SOCCER.SLASH_RANGE + B.r){
+    let da = Math.atan2(dby, dbx) - ang;
+    while (da > Math.PI) da -= TAU;
+    while (da < -Math.PI) da += TAU;
+    if (Math.abs(da) <= SOCCER.SLASH_ARC/2){
+      B.vx += (dbx/db) * SOCCER.KICK_FORCE;
+      B.vy += (dby/db) * SOCCER.KICK_FORCE;
+      B.hit = 0.2;
+      S.shake = Math.max(S.shake, 4);
+      for (let i=0;i<6;i++){
+        const a=rand(0,TAU), sp=rand(80,160);
+        S.fxs.push({ kind:'spark', x:B.x, y:B.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#e7b53b' });
+      }
+    }
+  }
+  // hit opponent → small knockback + hurt flash (no HP — flavor only)
+  if (doo < SOCCER.SLASH_RANGE + opponent.r){
+    let da2 = Math.atan2(doy, dox) - ang;
+    while (da2 > Math.PI) da2 -= TAU;
+    while (da2 < -Math.PI) da2 += TAU;
+    if (Math.abs(da2) <= SOCCER.SLASH_ARC/2){
+      opponent.x += dox/doo * 8;
+      opponent.y += doy/doo * 8;
+      opponent.hurt = 0.18;
+    }
+  }
+}
+
+function soccerGoal(who){
+  const S = soccer;
+  S.score[who]++;
+  S.lastScorer = who;
+  S.goalCd = 1.2;
+  S.shake = 12;
+  const c = who === 0 ? '#e7b53b' : '#d8362b';
+  for (let i=0;i<30;i++){
+    const a=rand(0,TAU), sp=rand(120,260);
+    S.fxs.push({ kind:'spark', x:S.ball.x, y:S.ball.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c });
+  }
+  // reset positions
+  S.ball.x = 0; S.ball.y = 0; S.ball.vx = 0; S.ball.vy = 0;
+  S.player.x = 0; S.player.y = 220;
+  S.ai.x = 0; S.ai.y = -220;
+}
+
+function endSoccerMatch(){
+  if (!soccer) return;
+  soccer.state = 'over';
+  const won = soccer.score[0] > soccer.score[1];
+  const draw = soccer.score[0] === soccer.score[1];
+  D('soccer-tag').textContent = 'Full Time';
+  D('soccer-ttl').textContent = draw ? 'DRAW' : (won ? 'VICTORY' : 'DEFEAT');
+  D('soccer-stats').innerHTML =
+    `<div><b>You</b> ${soccer.score[0]}</div><div><b>Opponent</b> ${soccer.score[1]}</div>`;
+  showOnly(elSoccerOver);
+}
+
+function drawSoccer(){
+  const S = soccer;
+  ctx.save();
+  let sx=0, sy=0;
+  if (S.shake>0){ sx=rand(-S.shake,S.shake); sy=rand(-S.shake,S.shake); }
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle = '#0a0a0e'; ctx.fillRect(0,0,W,H);
+
+  // fit the whole field with a bit of margin
+  const fitX = (W - 24) / (SOCCER.FIELD_X*2);
+  const fitY = (H - 100) / (SOCCER.FIELD_Y*2);
+  const fScale = Math.min(fitX, fitY);
+  ctx.translate(W/2 + sx, H/2 + sy + 18);   // leave room at top for HUD
+  ctx.scale(fScale, fScale);
+
+  // field
+  ctx.fillStyle = '#181820';
+  ctx.fillRect(-SOCCER.FIELD_X, -SOCCER.FIELD_Y, SOCCER.FIELD_X*2, SOCCER.FIELD_Y*2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 2;
+  ctx.strokeRect(-SOCCER.FIELD_X, -SOCCER.FIELD_Y, SOCCER.FIELD_X*2, SOCCER.FIELD_Y*2);
+  // halfway line + center circle
+  ctx.beginPath(); ctx.moveTo(-SOCCER.FIELD_X, 0); ctx.lineTo(SOCCER.FIELD_X, 0); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 0, 56, 0, TAU); ctx.stroke();
+  // red sun vignette
+  const grd = ctx.createRadialGradient(0,0,30, 0,0, 380);
+  grd.addColorStop(0,'rgba(216,54,43,0.07)'); grd.addColorStop(1,'rgba(0,0,0,0)');
+  ctx.fillStyle = grd; ctx.fillRect(-SOCCER.FIELD_X,-SOCCER.FIELD_Y, SOCCER.FIELD_X*2, SOCCER.FIELD_Y*2);
+  // petals
+  for (const pt of S.petals) drawPetal(pt);
+  // goals
+  drawSoccerGoal(-SOCCER.FIELD_Y, '#e7b53b');   // top — AI's goal
+  drawSoccerGoal( SOCCER.FIELD_Y, '#d8362b');   // bottom — your goal
+
+  // blades (under sprites)
+  for (const b of S.blades) drawArc(b);
+  // sprites
+  drawSoccerSamurai(S.ai, '#3a2628');
+  drawSoccerSamurai(S.player, '#1f1f26');
+  // ball
+  drawSoccerBall(S.ball);
+  // fx
+  for (const f of S.fxs) drawFx(f);
+
+  ctx.restore();
+
+  // screen-space HUD: score banner + timer
+  drawSoccerHud();
+
+  if (SETTINGS.joystick && S.state === 'play') drawStick();
+}
+function drawSoccerGoal(y, color){
+  // posts
+  const top = y < 0;
+  ctx.fillStyle = color;
+  ctx.fillRect(-SOCCER.GOAL_W-6, y-3, 6, 6);
+  ctx.fillRect( SOCCER.GOAL_W,   y-3, 6, 6);
+  // goal-mouth line
+  ctx.strokeStyle = color; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-SOCCER.GOAL_W, y); ctx.lineTo(SOCCER.GOAL_W, y); ctx.stroke();
+  // net hint
+  ctx.strokeStyle = color; ctx.globalAlpha = 0.25; ctx.lineWidth = 1;
+  const depth = top ? -22 : 22;
+  for (let i=-SOCCER.GOAL_W; i<=SOCCER.GOAL_W; i+=10){
+    ctx.beginPath(); ctx.moveTo(i, y); ctx.lineTo(i, y+depth); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(-SOCCER.GOAL_W, y+depth); ctx.lineTo(SOCCER.GOAL_W, y+depth); ctx.stroke();
+  ctx.globalAlpha = 1;
+}
+function drawSoccerBall(B){
+  ctx.save(); ctx.translate(B.x, B.y);
+  const flash = B.hit > 0;
+  ctx.shadowColor = '#e7b53b'; ctx.shadowBlur = flash ? 18 : 8;
+  ctx.fillStyle = flash ? '#fff' : '#ffd24a';
+  ctx.beginPath(); ctx.arc(0, 0, B.r, 0, TAU); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#8b1f1a'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 0, B.r*0.55, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-B.r*0.85, 0); ctx.lineTo(B.r*0.85, 0); ctx.stroke();
+  ctx.restore();
+}
+function drawSoccerSamurai(P, bodyColor){
+  ctx.save(); ctx.translate(P.x, P.y);
+  // shadow
+  ctx.fillStyle='rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(0, P.r*0.85, P.r*0.85, P.r*0.35, 0, 0, TAU); ctx.fill();
+  // hurt flash
+  const hurt = P.hurt > 0;
+  // body (robe)
+  const bob = Math.sin(P.walkPhase)*1.2;
+  ctx.fillStyle = hurt ? '#fff' : bodyColor;
+  ctx.beginPath(); ctx.arc(0, bob, P.r, 0, TAU); ctx.fill();
+  // afro head
+  ctx.fillStyle = hurt ? '#fff' : '#16161c';
+  ctx.beginPath(); ctx.arc(0, -P.r*1.05 + bob, P.r*0.78, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(-P.r*0.5,-P.r*0.8 + bob, P.r*0.4, 0, TAU);
+  ctx.arc(P.r*0.5,-P.r*0.8 + bob, P.r*0.4, 0, TAU); ctx.fill();
+  // headband
+  ctx.fillStyle = '#f2efe6'; ctx.fillRect(-P.r*0.55, -P.r*0.7 + bob, P.r*1.1, 3);
+  const face = Math.sign(Math.cos(P.lastAng)) || 1;
+  ctx.fillStyle = '#d8362b';
+  ctx.beginPath(); ctx.arc(face*P.r*0.5, -P.r*0.68 + bob, 2.2, 0, TAU); ctx.fill();
+  // sheathed katana
+  ctx.rotate(P.lastAng);
+  ctx.strokeStyle = '#cfd3da'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(P.r*0.4, 0); ctx.lineTo(P.r*1.4, 0); ctx.stroke();
+  ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(P.r*0.1, 0); ctx.lineTo(P.r*0.4, 0); ctx.stroke();
+  ctx.restore();
+}
+function drawSoccerHud(){
+  const S = soccer;
+  const timeLeft = Math.max(0, SOCCER.MATCH_TIME - S.t);
+  const m = Math.floor(timeLeft/60), s = Math.floor(timeLeft%60);
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 22px -apple-system,sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText(`${S.score[0]} – ${S.score[1]}`, W/2, 28);
+  ctx.font = '11px -apple-system,sans-serif';
+  ctx.fillStyle = '#cfd3da';
+  ctx.fillText(`${m}:${String(s).padStart(2,'0')}`, W/2, 46);
+  ctx.textAlign = 'left'; ctx.fillStyle = '#e7b53b'; ctx.font = 'bold 11px -apple-system,sans-serif';
+  ctx.fillText('YOU',  W/2 - 60, 24);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#d8362b';
+  ctx.fillText('OPP', W/2 + 60, 24);
+  if (S.goalCd > 0 && S.lastScorer >= 0){
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px -apple-system,sans-serif';
+    ctx.fillStyle = S.lastScorer === 0 ? '#e7b53b' : '#d8362b';
+    ctx.globalAlpha = Math.min(1, S.goalCd);
+    ctx.fillText(S.lastScorer === 0 ? 'GOAL!' : 'CONCEDED', W/2, H/2 - 80);
+  }
+  ctx.restore();
+}
+
 function loop(now){
   let dt = (now - last) / 1000; last = now;
   if (dt > 0.05) dt = 0.05;            // clamp big stalls
+  if (soccer){
+    if (soccer.state === 'play') updateSoccer(dt);
+    drawSoccer();
+    requestAnimationFrame(loop);
+    return;
+  }
   if (game && game.state === STATE.PLAY){ update(dt); }
   draw();
   if (game && game.state !== STATE.TITLE) updateHud();
@@ -1290,8 +1677,13 @@ requestAnimationFrame(loop);
 D('startbtn').onclick = ()=>{ newGame(); };
 D('againbtn').onclick = ()=>{ newGame(); };
 D('resumebtn').onclick = togglePause;
-D('quitbtn').onclick = ()=>{ game=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
+D('quitbtn').onclick = ()=>{ game=null; soccer=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 elPauseBtn.onclick = togglePause;
+
+// ---------- soccer wiring ----------
+D('opt-soccer').onclick = ()=>{ startSoccer(); };
+D('soccer-again').onclick = ()=>{ startSoccer(); };
+D('soccer-back').onclick = ()=>{ soccer=null; elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 
 // ---------- options menu ----------
 function refreshOptionsUI(){
