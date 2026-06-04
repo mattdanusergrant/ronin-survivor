@@ -247,6 +247,24 @@ const WEAPONS = {
   lantern: { name:'Soul Lantern', ico:'🏮', max:6,
     desc: l => l===0 ? 'Drop a lantern that burns nearby foes.' :
       `Lv ${l+1}: +dmg, larger radius, longer burn.` },
+  iron: { name:'Iron Wind', ico:'💨', max:6,
+    desc: l => l===0 ? 'A whirling damaging aura surrounds you — always-on.' :
+      `Lv ${l+1}: +dmg, larger radius, faster ticks.` },
+  trail: { name:'Blood Trail', ico:'🩸', max:6,
+    desc: l => l===0 ? 'Drops damaging blood marks behind you as you move.' :
+      `Lv ${l+1}: +dmg, dropped faster, larger marks.` },
+  kunai: { name:'Kunai Volley', ico:'🗡️', max:6,
+    desc: l => l===0 ? 'A fast piercing kunai snaps to the nearest foe.' :
+      `Lv ${l+1}: +dmg, faster throws.` },
+  thunder: { name:'Thunder Tag', ico:'🌩️', max:6,
+    desc: l => l===0 ? 'Lightning lashes the nearest foe, chaining to others nearby.' :
+      `Lv ${l+1}: ${thunderStats(l+1).jumps+1} foes hit, +dmg.` },
+  bloom: { name:'Lotus Bloom', ico:'🪷', max:6,
+    desc: l => l===0 ? 'A blossoming shockwave erupts from you in every direction.' :
+      `Lv ${l+1}: +dmg, larger bloom, faster.` },
+  wraith: { name:'Spirit Wraith', ico:'👻', max:6,
+    desc: l => l===0 ? 'A spirit-bomb that homes onto a foe and detonates.' :
+      `Lv ${l+1}: +dmg, larger blast, faster summons.` },
 };
 function katStats(l){ return { dmg: 7 + l*4, cd: 420 - l*35, range: 72 + l*10, arc: 1.45 + l*0.1 }; }
 function shurStats(l){ return { dmg: 6 + l*4, cd: 1050 - l*70, count: 1 + Math.floor(l/2), speed: 360 }; }
@@ -255,6 +273,12 @@ function orbitCount(l){ return 1 + Math.floor((l+1)/2); }
 function orbitStats(l){ return { dmg: 6 + l*4, count: orbitCount(l), radius: 64, speed: 2.4, hitCd: 0.45 }; }
 function petalStats(l){ return { dmg: 6 + l*3, cd: 1600 - l*100, count: 4 + l*2, speed: 220, range: 240 }; }
 function lanternStats(l){ return { dmg: 5 + l*2, cd: 1900 - l*150, r: 50 + l*8, life: 4.0 + l*0.3 }; }
+function ironStats(l){ return { dmg: 2 + l*2, cd: 500 - l*40, r: 42 + l*8 }; }
+function trailStats(l){ return { dmg: 5 + l*3, cd: 600 - l*60, r: 18 + l*2, life: 4.0 + l*0.2 }; }
+function kunaiStats(l){ return { dmg: 7 + l*3, cd: 550 - l*50, speed: 480, pierce: 2 }; }
+function thunderStats(l){ return { dmg: 10 + l*5, cd: 1300 - l*100, jumps: Math.floor((l+1)/2), jumpR: 100 + l*15 }; }
+function bloomStats(l){ return { dmg: 10 + l*5, cd: 1700 - l*120, r: 65 + l*12 }; }
+function wraithStats(l){ return { dmg: 16 + l*8, cd: 1700 - l*100, aoe: 22 + l*3, speed: 250, turn: 3.5 }; }
 
 const PASSIVES = {
   power:  { name:'Whetstone',    ico:'🔪', desc:'+15% all damage',        cap:6, apply:p=>p.power*=1.15 },
@@ -393,7 +417,8 @@ function killEnemy(e){
 // =====================================================================
 //  WEAPONS — fired from update()
 // =====================================================================
-const cd = { katana:0, shuriken:0, kiwave:0, petal:0, lantern:0 };
+const cd = { katana:0, shuriken:0, kiwave:0, petal:0, lantern:0,
+              iron:0, trail:0, kunai:0, thunder:0, bloom:0, wraith:0 };
 let orbitT = 0, orbitNodes = [];
 function rebuildOrbit(){
   orbitNodes = [];
@@ -497,6 +522,103 @@ function fireWeapons(dt){
       cd.lantern = s.cd/1000 * hz;
       shots.push({ kind:'lantern', x:P.x, y:P.y, vx:0, vy:0,
         dmg:s.dmg*P.power, r:s.r, life:s.life, tickT:0 });
+    }
+  }
+  // IRON WIND — always-on damaging aura around the player
+  if (P.weapons.iron){
+    cd.iron -= dt;
+    const s = ironStats(P.weapons.iron);
+    if (cd.iron <= 0){
+      cd.iron = s.cd/1000 * hz;
+      const d2 = s.r * s.r;
+      for (const e of enemies){
+        if (e.dead) continue;
+        const dx = e.x-P.x, dy = e.y-P.y;
+        if (dx*dx + dy*dy < d2 + e.r*e.r) damage(e, s.dmg*P.power, dx, dy);
+      }
+    }
+  }
+  // BLOOD TRAIL — drops a damaging mark at the player, one-hit per foe
+  if (P.weapons.trail){
+    cd.trail -= dt;
+    const s = trailStats(P.weapons.trail);
+    if (cd.trail <= 0){
+      cd.trail = s.cd/1000 * hz;
+      shots.push({ kind:'trail', x:P.x, y:P.y, vx:0, vy:0,
+        dmg:s.dmg*P.power, r:s.r, life:s.life, hit:new Set() });
+    }
+  }
+  // KUNAI VOLLEY — fast piercing single-target stream
+  if (P.weapons.kunai){
+    cd.kunai -= dt;
+    const s = kunaiStats(P.weapons.kunai);
+    if (cd.kunai <= 0){
+      const t = nearest(1)[0];
+      if (t){
+        cd.kunai = s.cd/1000 * hz;
+        const a = Math.atan2(t.y-P.y, t.x-P.x);
+        shots.push({ kind:'kunai', x:P.x, y:P.y, vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:5, life:1.4, pierce:s.pierce, rot:a });
+      }
+    }
+  }
+  // THUNDER TAG — chain lightning, instant-damage with visual link fx
+  if (P.weapons.thunder){
+    cd.thunder -= dt;
+    const s = thunderStats(P.weapons.thunder);
+    if (cd.thunder <= 0){
+      const first = nearest(1)[0];
+      if (first){
+        cd.thunder = s.cd/1000 * hz;
+        const seen = new Set([first._id]);
+        let curr = first;
+        fx.push({ kind:'lightning', x1:P.x, y1:P.y, x2:curr.x, y2:curr.y, t:0, life:0.28 });
+        damage(curr, s.dmg*P.power, curr.x-P.x, curr.y-P.y);
+        const jr2 = s.jumpR * s.jumpR;
+        for (let j=0; j<s.jumps; j++){
+          let next = null, bestD2 = jr2;
+          for (const e of enemies){
+            if (e.dead || seen.has(e._id)) continue;
+            const dx = e.x-curr.x, dy = e.y-curr.y;
+            const d2 = dx*dx + dy*dy;
+            if (d2 < bestD2){ bestD2 = d2; next = e; }
+          }
+          if (!next) break;
+          fx.push({ kind:'lightning', x1:curr.x, y1:curr.y, x2:next.x, y2:next.y, t:0, life:0.28 });
+          damage(next, s.dmg*P.power, next.x-curr.x, next.y-curr.y);
+          seen.add(next._id);
+          curr = next;
+        }
+      }
+    }
+  }
+  // LOTUS BLOOM — instant radial pulse from player
+  if (P.weapons.bloom){
+    cd.bloom -= dt;
+    const s = bloomStats(P.weapons.bloom);
+    if (cd.bloom <= 0){
+      cd.bloom = s.cd/1000 * hz;
+      for (const e of enemies){
+        if (e.dead) continue;
+        const dx = e.x-P.x, dy = e.y-P.y;
+        if (dx*dx + dy*dy < (s.r+e.r)*(s.r+e.r)) damage(e, s.dmg*P.power, dx, dy);
+      }
+      fx.push({ kind:'bloomring', x:P.x, y:P.y, r:s.r, t:0, life:0.42 });
+    }
+  }
+  // SPIRIT WRAITH — homing missile with AoE on contact
+  if (P.weapons.wraith){
+    cd.wraith -= dt;
+    const s = wraithStats(P.weapons.wraith);
+    if (cd.wraith <= 0){
+      const t = nearest(1)[0];
+      if (t){
+        cd.wraith = s.cd/1000 * hz;
+        const a = Math.atan2(t.y-P.y, t.x-P.x);
+        shots.push({ kind:'wraith', x:P.x, y:P.y,
+          vx:Math.cos(a)*s.speed, vy:Math.sin(a)*s.speed,
+          dmg:s.dmg*P.power, r:s.aoe, life:3.5, speed:s.speed, turn:s.turn });
+      }
     }
   }
 }
@@ -620,9 +742,64 @@ function update(dt){
       continue;
     }
 
+    // BLOOD TRAIL — stationary, one-hit per enemy then sits until life expires
+    if (s.kind==='trail'){
+      for (const e of enemies){
+        if (e.dead || s.hit.has(e._id)) continue;
+        if (Math.hypot(e.x-s.x, e.y-s.y) < s.r + e.r){
+          damage(e, s.dmg, e.x-s.x, e.y-s.y);
+          s.hit.add(e._id);
+        }
+      }
+      continue;
+    }
+
+    // SPIRIT WRAITH — home onto nearest, explode on contact
+    if (s.kind==='wraith'){
+      let tgt = null, bestD2 = Infinity;
+      for (const e of enemies){
+        if (e.dead) continue;
+        const dx = e.x-s.x, dy = e.y-s.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bestD2){ bestD2 = d2; tgt = e; }
+      }
+      if (tgt){
+        const want = Math.atan2(tgt.y-s.y, tgt.x-s.x);
+        const curA = Math.atan2(s.vy, s.vx);
+        let diff = want - curA;
+        while (diff > Math.PI) diff -= TAU;
+        while (diff < -Math.PI) diff += TAU;
+        const maxTurn = s.turn * dt;
+        const turn = Math.max(-maxTurn, Math.min(maxTurn, diff));
+        const newA = curA + turn;
+        s.vx = Math.cos(newA) * s.speed;
+        s.vy = Math.sin(newA) * s.speed;
+      }
+      s.x += s.vx*dt; s.y += s.vy*dt;
+      // detonate on touching any enemy
+      for (const e of enemies){
+        if (e.dead) continue;
+        if (Math.hypot(e.x-s.x, e.y-s.y) < e.r + 8){
+          shake = Math.max(shake, 3);
+          for (const e2 of enemies){
+            if (e2.dead) continue;
+            if (Math.hypot(e2.x-s.x, e2.y-s.y) < s.r + e2.r) damage(e2, s.dmg, e2.x-s.x, e2.y-s.y);
+          }
+          for (let i=0;i<10;i++){
+            const a=rand(0,TAU), sp=rand(80,180);
+            fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#ccaaff' });
+          }
+          s.life = 0;
+          break;
+        }
+      }
+      continue;
+    }
+
     s.x += s.vx*dt; s.y += s.vy*dt;
     if (s.kind==='shuriken') s.rot += dt*22;
     if (s.kind==='petal') s.rot += s.vr*dt;
+    if (s.kind==='kunai') s.rot = Math.atan2(s.vy, s.vx);
 
     for (const e of enemies){
       if (e.dead) continue;
@@ -773,6 +950,8 @@ function draw(){
   // katana arcs
   for (const b of blades) drawArc(b);
 
+  // aura (iron wind) — under the player so the figure stays centered in it
+  drawAuras();
   // player
   drawPlayer();
 
@@ -875,6 +1054,46 @@ function drawShot(s){
     ctx.beginPath(); ctx.ellipse(0,0,8,4,0,0,TAU); ctx.fill();
     ctx.fillStyle='rgba(216,54,82,0.7)';
     ctx.beginPath(); ctx.ellipse(0,0,3,1.4,0,0,TAU); ctx.fill();
+  } else if (s.kind==='kunai'){
+    ctx.rotate(s.rot);
+    // blade
+    ctx.fillStyle='#cfd3da';
+    ctx.beginPath(); ctx.moveTo(10,0); ctx.lineTo(2,-3); ctx.lineTo(-6,-2); ctx.lineTo(-6,2); ctx.lineTo(2,3); ctx.closePath(); ctx.fill();
+    // dark grip + wrap
+    ctx.fillStyle='#16161c'; ctx.fillRect(-9,-2,4,4);
+    ctx.fillStyle='#d8362b'; ctx.beginPath(); ctx.arc(-8,0,1.2,0,TAU); ctx.fill();
+    // glint
+    ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(8,-1); ctx.lineTo(0,-2); ctx.stroke();
+  } else if (s.kind==='trail'){
+    const fade = Math.min(1, s.life/1.0);
+    ctx.globalAlpha = fade;
+    // dark splatter
+    ctx.fillStyle='rgba(80,12,12,0.85)';
+    ctx.beginPath(); ctx.arc(0,0, s.r, 0, TAU); ctx.fill();
+    ctx.fillStyle='rgba(216,54,43,0.55)';
+    ctx.beginPath(); ctx.arc(0,0, s.r*0.55, 0, TAU); ctx.fill();
+    // a couple drips
+    ctx.fillStyle='rgba(80,12,12,0.7)';
+    ctx.beginPath(); ctx.arc(-s.r*0.7, s.r*0.4, s.r*0.18, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc( s.r*0.6,-s.r*0.5, s.r*0.14, 0, TAU); ctx.fill();
+  } else if (s.kind==='wraith'){
+    // ghostly homing bomb
+    const pulse = 1 + Math.sin(game.t*9)*0.15;
+    ctx.shadowColor='#d6b8ff'; ctx.shadowBlur=14;
+    ctx.fillStyle='rgba(220,200,255,0.85)';
+    ctx.beginPath(); ctx.arc(0,-2, 9*pulse, 0, TAU); ctx.fill();
+    // tail
+    const ang = Math.atan2(s.vy, s.vx);
+    ctx.rotate(ang);
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle='rgba(200,170,255,0.7)';
+    ctx.beginPath(); ctx.moveTo(-4,-6); ctx.lineTo(-18,0); ctx.lineTo(-4,6); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+    // eyes
+    ctx.shadowBlur=0;
+    ctx.fillStyle='#1a0e2c';
+    ctx.beginPath(); ctx.arc(2,-4,1.5,0,TAU); ctx.arc(6,-4,1.5,0,TAU); ctx.fill();
   } else if (s.kind==='lantern'){
     const pulse = 1 + Math.sin(game.t*5 + s.x)*0.12;
     const fade = Math.min(1, s.life/0.6);
@@ -898,6 +1117,27 @@ function drawShot(s){
     ctx.beginPath(); ctx.arc(-s.r*0.3,0,s.r, -Math.PI/2.4, Math.PI/2.4); ctx.stroke();
   }
   ctx.restore();
+}
+
+function drawAuras(){
+  // Iron Wind: a translucent ring around the player + an expanding pulse at the
+  // tick cadence. Both pulses traveling outward visualize a damaging cyclone.
+  if (player.weapons.iron){
+    const s = ironStats(player.weapons.iron);
+    ctx.save(); ctx.translate(player.x, player.y);
+    // base ring
+    ctx.strokeStyle='rgba(190,200,220,0.18)'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.arc(0,0, s.r, 0, TAU); ctx.stroke();
+    // two staggered pulses
+    const period = Math.max(0.2, s.cd/1000);
+    for (let i=0; i<2; i++){
+      const phase = ((game.t + i*period*0.5) % period) / period;  // 0..1
+      ctx.globalAlpha = (1 - phase) * 0.45;
+      ctx.strokeStyle='#cfd3da'; ctx.lineWidth = 1 + 2*(1-phase);
+      ctx.beginPath(); ctx.arc(0,0, s.r * (0.2 + phase*0.85), 0, TAU); ctx.stroke();
+    }
+    ctx.restore();
+  }
 }
 
 function drawArc(b){
@@ -961,6 +1201,43 @@ function drawFx(f){
   } else if (f.kind==='spark'){
     ctx.save(); ctx.globalAlpha = 1 - f.t/f.life;
     ctx.fillStyle = f.c; ctx.beginPath(); ctx.arc(f.x,f.y,2.5,0,TAU); ctx.fill(); ctx.restore();
+  } else if (f.kind==='lightning'){
+    // jagged bolt from (x1,y1) → (x2,y2) with random midpoints
+    const k = f.t / f.life;
+    ctx.save(); ctx.globalAlpha = 1 - k;
+    ctx.shadowColor='#fff7a0'; ctx.shadowBlur=12;
+    ctx.strokeStyle='#fff7a0'; ctx.lineWidth = 2.5 * (1-k) + 1;
+    const dx = f.x2 - f.x1, dy = f.y2 - f.y1;
+    const len = Math.hypot(dx,dy) || 1;
+    const nx = -dy/len, ny = dx/len;
+    ctx.beginPath(); ctx.moveTo(f.x1, f.y1);
+    const segs = 4;
+    for (let i=1; i<segs; i++){
+      const t = i/segs;
+      // deterministic-ish jitter — seed by endpoints so the bolt doesn't flicker
+      const jitter = (Math.sin(f.x1 + f.y1*0.7 + i*13) * 0.5) * 14;
+      const mx = f.x1 + dx*t + nx*jitter;
+      const my = f.y1 + dy*t + ny*jitter;
+      ctx.lineTo(mx, my);
+    }
+    ctx.lineTo(f.x2, f.y2);
+    ctx.stroke();
+    // inner white core
+    ctx.shadowBlur=0; ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth=1;
+    ctx.stroke();
+    ctx.restore();
+  } else if (f.kind==='bloomring'){
+    // pink expanding ring with a faint inner shockwave
+    const k = f.t / f.life;
+    ctx.save(); ctx.globalAlpha = 1 - k;
+    ctx.shadowColor='#ff8aa8'; ctx.shadowBlur=18;
+    ctx.strokeStyle='#ff8aa8'; ctx.lineWidth = 3*(1-k) + 1.5;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.55 + k*0.55), 0, TAU); ctx.stroke();
+    // soft petal-shadow inside
+    ctx.shadowBlur=0;
+    ctx.strokeStyle='rgba(216,54,82,0.55)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.4 + k*0.4), 0, TAU); ctx.stroke();
+    ctx.restore();
   } else if (f.kind==='warn'){
     // boss incoming flash text (screen space handled in HUD-ish way)
   }
