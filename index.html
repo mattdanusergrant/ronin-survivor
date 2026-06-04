@@ -1693,6 +1693,7 @@ function startVolley(){
   volley = {
     state:'play', t:0,
     score:[0,0], lastScorer:-1, serveCd:0.6, shake:0,
+    currentSide:-1, sideTouches:0, rallyCount:0, speedMult:1.0, faultFlash:0,
     ball: { x:-160, y:-100, r:VOLLEY.BALL_R, vx:rand(-30,30), vy:80, hit:0 },
     player:{ x:-220, y:groundY, vy:0, grounded:true, r:VOLLEY.PLAYER_R,
              lastAng:0, slashCd:0, walkPhase:0, moving:false, hurt:0 },
@@ -1769,6 +1770,11 @@ function updateVolley(dt){
     if (B.vx > 0){ B.x = -B.r - 4; B.vx = -Math.abs(B.vx)*0.55; }
     else        { B.x =  B.r + 4; B.vx =  Math.abs(B.vx)*0.55; }
   }
+  // track which side the ball is currently on; reset touch counter on cross
+  const nowSide = B.x < 0 ? -1 : 1;
+  if (nowSide !== V.currentSide){ V.currentSide = nowSide; V.sideTouches = 0; }
+  if (V.faultFlash > 0) V.faultFlash -= dt;
+
   // floor → score
   if (B.y >= VOLLEY.FLOOR_Y - B.r){
     volleyScore(B.x < 0 ? 1 : 0);
@@ -1808,20 +1814,38 @@ function volleySlashTick(P, dt, B, dirSign){
   if (P.slashCd > 0) return;
   const dbx = B.x - P.x, dby = B.y - P.y, db = Math.hypot(dbx, dby);
   if (db > VOLLEY.SLASH_RANGE + B.r) return;
-  // cone aim toward ball
-  const ang = Math.atan2(dby, dbx);
-  // we always fire when ball is in reach — no need to re-check cone (the slash IS aimed at the ball)
+
+  const slasherSide = dirSign > 0 ? -1 : +1;   // player is left (-1); AI is right (+1)
   P.slashCd = VOLLEY.SLASH_CD;
+
+  // FAULT: 4th touch by the same side without crossing the net → opponent scores
+  if (slasherSide === V.currentSide && V.sideTouches >= 3){
+    V.faultFlash = 0.9;
+    volleyScore(slasherSide === -1 ? 1 : 0);
+    return;
+  }
+
+  // legal hit: count it, ramp ball speed
+  V.sideTouches++;
+  V.rallyCount++;
+  V.speedMult = Math.min(2.4, V.speedMult * 1.07);
+
+  const ang = Math.atan2(dby, dbx);
   P.lastAng = ang;
   V.blades.push({ kind:'arc', x:P.x, y:P.y, ang, range:VOLLEY.SLASH_RANGE, arc:VOLLEY.SLASH_ARC, t:0, life:0.16, side:1 });
-  // kick: strong up + horizontal toward opponent (blend with attack direction)
-  B.vy = -VOLLEY.KICK_UP;
-  B.vx = dirSign * VOLLEY.KICK_FWD * 0.7 + (db>0 ? dbx/db*VOLLEY.KICK_FWD*0.3 : 0);
+
+  // kick scales with the current rally's speedMult
+  const kickUp  = VOLLEY.KICK_UP  * V.speedMult;
+  const kickFwd = VOLLEY.KICK_FWD * V.speedMult;
+  B.vy = -kickUp;
+  B.vx = dirSign * kickFwd * 0.7 + (db>0 ? dbx/db*kickFwd*0.3 : 0);
   B.hit = 0.2;
-  V.shake = Math.max(V.shake, 3);
+  V.shake = Math.max(V.shake, 3 + V.speedMult);
+  const hot = V.speedMult > 1.5;
   for (let i=0;i<6;i++){
     const a=rand(0,TAU), sp=rand(80,160);
-    V.fxs.push({ kind:'spark', x:B.x, y:B.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#e7b53b' });
+    V.fxs.push({ kind:'spark', x:B.x, y:B.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp,
+                 t:0, life:rand(.3,.55), c: hot ? '#ff5a3d' : '#e7b53b' });
   }
 }
 
@@ -1844,6 +1868,8 @@ function volleyScore(who){
   V.player.x = -220; V.player.y = groundY; V.player.vy = 0; V.player.grounded = true;
   V.ai.x = 220;     V.ai.y = groundY;     V.ai.vy = 0;     V.ai.grounded = true;
   V.serveCd = 0.5;
+  V.currentSide = serverSide;  V.sideTouches = 0;
+  V.rallyCount = 0;            V.speedMult = 1.0;
 }
 
 function endVolleyMatch(){
@@ -1925,6 +1951,25 @@ function drawVolley(){
   ctx.font='bold 11px -apple-system,sans-serif';
   ctx.textAlign='left'; ctx.fillStyle='#e7b53b'; ctx.fillText('YOU', W/2-60, 24);
   ctx.textAlign='right'; ctx.fillStyle='#d8362b'; ctx.fillText('OPP', W/2+60, 24);
+  // rally counter — escalating color + size with speedMult
+  if (V.rallyCount > 0){
+    const hot = V.speedMult > 1.5, blazing = V.speedMult > 2.0;
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${15 + Math.floor(V.speedMult*4)}px -apple-system,sans-serif`;
+    ctx.fillStyle = blazing ? '#ff5a3d' : (hot ? '#ffaa3d' : '#e7b53b');
+    ctx.fillText(`RALLY ${V.rallyCount}`, W/2, 72);
+    ctx.font = '10px -apple-system,sans-serif'; ctx.fillStyle = '#cfd3da';
+    ctx.fillText(`touches ${V.sideTouches}/3`, W/2, 86);
+  }
+  // fault flash
+  if (V.faultFlash > 0){
+    ctx.globalAlpha = Math.min(1, V.faultFlash/0.4);
+    ctx.fillStyle = '#ff5a3d';
+    ctx.font = 'bold 28px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('FAULT!', W/2, H/2 - 100);
+    ctx.globalAlpha = 1;
+  }
   ctx.restore();
 
   if (SETTINGS.joystick && V.state === 'play') drawStick();
