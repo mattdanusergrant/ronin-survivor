@@ -339,9 +339,90 @@ function refreshDojoHud(){
 }
 function leaveDojo(){
   game = null;
+  runSnapshot = null;   // chose to leave instead of gate → abandon any paused run
   D('dojo-hud').classList.add('hidden');
   D('dojo-interact').classList.add('hidden');
   showOnly(elTitle);
+}
+
+// ---------- WORLD BUILDINGS (in the run) ----------
+const BUILDING_TYPES = {
+  dojo:    { name:'The Dojo',         ico:'🏯', tag:'enter',   color:'#7a5b2a', repeatable:true },
+  bandits: { name:'Bandit Camp',      ico:'🏚️', tag:'+50 Ryo', color:'#5a3530', reward:'ryo',  enemyCount:12 },
+  shrine:  { name:'Forgotten Shrine', ico:'⛩️', tag:'Heal',    color:'#2a8f97', reward:'heal', enemyCount: 8 },
+  cache:   { name:"Ronin's Cache",    ico:'📦', tag:'+15% DMG',color:'#e7b53b', reward:'buff', enemyCount:10 },
+};
+function generateBuildings(){
+  const out = [];
+  // dojo always present at a comfortable distance
+  const dojoAng = rand(0, TAU), dojoD = 280;
+  out.push(makeBuilding('dojo', Math.cos(dojoAng)*dojoD, Math.sin(dojoAng)*dojoD));
+  // 2 or 3 random traps
+  const trapTypes = ['bandits','shrine','cache'];
+  const n = 2 + (Math.random() < 0.6 ? 1 : 0);
+  // shuffle
+  for (let i=trapTypes.length-1; i>0; i--){ const j=(Math.random()*(i+1))|0; [trapTypes[i],trapTypes[j]]=[trapTypes[j],trapTypes[i]]; }
+  for (let i=0; i<n; i++){
+    const type = trapTypes[i];
+    let placed = null;
+    for (let a=0; a<30 && !placed; a++){
+      const ang = rand(0, TAU), d = rand(280, 520);
+      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
+      const tooClose = out.some(b => Math.hypot(b.x-x, b.y-y) < 220);
+      if (!tooClose) placed = { x, y };
+    }
+    if (!placed) placed = { x: rand(-450,450), y: rand(-450,450) };
+    out.push(makeBuilding(type, placed.x, placed.y));
+  }
+  return out;
+}
+function makeBuilding(type, x, y){
+  const cfg = BUILDING_TYPES[type];
+  return {
+    kind:'building', type, x, y, r:46,
+    name:cfg.name, ico:cfg.ico, tag:cfg.tag, color:cfg.color,
+    state:'fresh', reward:cfg.reward, enemyCount:cfg.enemyCount,
+    enemiesSpawned:[],
+  };
+}
+
+// snapshot/restore the entire run so the dojo can be visited mid-run
+let runSnapshot = null;
+function snapshotRun(){
+  runSnapshot = {
+    game, player, enemies, orbs, shots, blades, fx, petals, shake,
+    cd: Object.assign({}, cd),
+    lastAng, orbitT, orbitNodes: orbitNodes.slice(), _eid,
+  };
+}
+function restoreRun(){
+  if (!runSnapshot) return false;
+  game = runSnapshot.game;
+  player = runSnapshot.player;
+  enemies = runSnapshot.enemies;
+  orbs = runSnapshot.orbs;
+  shots = runSnapshot.shots;
+  blades = runSnapshot.blades;
+  fx = runSnapshot.fx;
+  petals = runSnapshot.petals;
+  shake = runSnapshot.shake;
+  for (const k in cd) cd[k] = (k in runSnapshot.cd) ? runSnapshot.cd[k] : 0;
+  lastAng = runSnapshot.lastAng;
+  orbitT = runSnapshot.orbitT;
+  orbitNodes = runSnapshot.orbitNodes;
+  _eid = runSnapshot._eid;
+  runSnapshot = null;
+  D('dojo-hud').classList.add('hidden');
+  D('dojo-interact').classList.add('hidden');
+  elHud.classList.remove('hidden');
+  elPauseBtn.classList.remove('hidden');
+  showOnly(null);
+  return true;
+}
+function enterDojoFromRun(){
+  if (!game || game.dojoMode) return;
+  snapshotRun();
+  startDojo();
 }
 
 // ---------- META PROGRESSION (The Dojo) ----------
@@ -504,7 +585,10 @@ const PASSIVES = {
 //  SETUP / RESET
 // =====================================================================
 function newGame(){
-  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:5, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0} };
+  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:5, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
+           interactWith:null, lastInteract:0 };
+  // run-mode interact button uses the same DOM element as the dojo's, just no Ryo HUD around it
+  D('dojo-interact').classList.add('hidden');
   player = {
     x:0, y:0, r:14, hp:100, maxhp:100, speed:148, baseSpeed:148,
     power:1, haste:1, magnet:1, xpMult:1, regen:0,
@@ -514,6 +598,8 @@ function newGame(){
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
+  runSnapshot = null;                  // fresh runs invalidate any saved run
+  game.buildings = generateBuildings();
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
@@ -601,6 +687,56 @@ function spawnEnemy(boss=false, distOverride=null){
     sight:t.sight, callR:t.callR,
     wDir:rand(0,TAU), wTimer:rand(1.2,3.2), wSpeed:rand(0.35,0.55),
     alertT:0, chargeT:0, chargeCheckT:rand(0,0.6) });
+}
+
+function springTrap(b){
+  if (b.state !== 'fresh') return;
+  b.state = 'active';
+  b.enemiesSpawned = [];
+  const tm = timeMul();
+  const roster = ['footpad','footpad','ronin','ninja'];
+  const cnt = b.enemyCount || 10;
+  for (let i=0; i<cnt; i++){
+    const ang = (i / cnt) * TAU + rand(-0.15, 0.15);
+    const d = 80 + rand(0, 40);
+    const x = b.x + Math.cos(ang)*d, y = b.y + Math.sin(ang)*d;
+    const t = ENEMY_TYPES[pick(roster)];
+    const e = { x, y, r:t.r, hp:t.hp*tm*1.1, maxhp:t.hp*tm*1.1, speed:t.speed*rand(.9,1.1),
+      dmg:t.dmg, xp:t.xp*2, color:t.color, hit:0, boss:false, sep:0,
+      state:'chase', sight:9999, callR:0,
+      wDir:0, wTimer:0, wSpeed:0, alertT:0, chargeT:0, chargeCheckT:rand(0,0.6),
+      fromTrap:b };
+    enemies.push(e);
+    b.enemiesSpawned.push(e);
+  }
+  shake = Math.max(shake, 8);
+  // burst at the building entrance
+  for (let i=0;i<22;i++){ const a=rand(0,TAU), sp=rand(80,180);
+    fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#d8362b' }); }
+}
+function checkTrapClear(b){
+  if (b.state !== 'active') return;
+  const remaining = b.enemiesSpawned.filter(e => !e.dead && e.hp > 0).length;
+  if (remaining === 0){
+    b.state = 'cleared';
+    // reward orb at the building entrance — picked up like a ki orb
+    orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:b.reward });
+    // celebration sparks
+    for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
+      fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,1.0), c:'#e7b53b' }); }
+  }
+}
+function applyReward(kind){
+  if (kind === 'ryo'){
+    META.ryo += 50; META.totalRyo += 50; saveMeta();
+    fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'+50 RYO', t:0, life:1.8, vy:-32 });
+  } else if (kind === 'heal'){
+    player.hp = player.maxhp;
+    fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'FULL HEAL', t:0, life:1.8, vy:-32 });
+  } else if (kind === 'buff'){
+    player.power *= 1.15;
+    fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'+15% DMG', t:0, life:1.8, vy:-32 });
+  }
 }
 
 // =====================================================================
@@ -1222,13 +1358,21 @@ function update(dt){
     const dx=P.x-o.x, dy=P.y-o.y, d=Math.hypot(dx,dy);
     if (d < mr || o.pull) o.pull = 1;
     if (o.pull){ const sp = 260; o.x += dx/(d||1)*sp*dt; o.y += dy/(d||1)*sp*dt; }
-    if (d < P.r + 6){ o.got=true; gainXP(o.xp); }
+    if (d < P.r + 6){ o.got=true; if (o.isReward) applyReward(o.reward); else gainXP(o.xp); }
   }
   orbs = orbs.filter(o=>!o.got);
-  // drop dead enemies and cull strays that wandered too far (dummies are immortal)
+  // trap-clear check (runs cheaply since active traps are few)
+  if (game.buildings){
+    for (const b of game.buildings){
+      if (b.state === 'active') checkTrapClear(b);
+    }
+  }
+  // drop dead enemies and cull strays that wandered too far. Dummies and
+  // trap-spawned enemies are immortal (the latter so they can't escape the cleared check).
   const cullR2 = 1100 * 1100;
   enemies = enemies.filter(e => {
     if (e.dummy) return true;
+    if (e.fromTrap && !e.dead) return true;
     if (e.dead) return false;
     if (e.boss) return true;
     const dx = e.x - player.x, dy = e.y - player.y;
@@ -1256,13 +1400,18 @@ function update(dt){
   if (shake>0) shake = Math.max(0, shake - dt*40);
 
   // dojo: detect station overlap → show ENTER prompt
-  if (game.dojoMode) updateDojoStations();
+  // interactable detection: dojo stations in the hub, buildings during a run
+  if (game.dojoMode || game.buildings) updateDojoStations();
 }
 
 function updateDojoStations(){
   const P = player;
   let near = null, bestD2 = Infinity;
-  for (const s of DOJO_STATIONS){
+  const candidates = game.dojoMode ? DOJO_STATIONS : (game.buildings || []);
+  for (const s of candidates){
+    // skip cleared trap buildings — no longer interactive
+    if (s.kind === 'building' && s.state === 'cleared') continue;
+    if (s.kind === 'building' && s.state === 'active' && s.type !== 'dojo') continue;
     const dx = s.x-P.x, dy = s.y-P.y;
     const rr = s.r + P.r;
     const d2 = dx*dx + dy*dy;
@@ -1272,7 +1421,13 @@ function updateDojoStations(){
     game.interactWith = near;
     const btn = D('dojo-interact');
     if (near){
-      btn.textContent = (near.kind==='exit' ? 'LEAVE — ' : 'ENTER — ') + near.name;
+      let label;
+      if (near.kind === 'building'){
+        if (near.type === 'dojo') label = 'ENTER — ' + near.name;
+        else label = `SPRING TRAP — ${near.name} · ${near.tag}`;
+      } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
+      else label = 'ENTER — ' + near.name;
+      btn.textContent = label;
       btn.classList.remove('hidden');
     } else {
       btn.classList.add('hidden');
@@ -1280,17 +1435,28 @@ function updateDojoStations(){
   }
 }
 function dojoActivate(){
-  if (!game || !game.dojoMode || !game.interactWith) return;
+  if (!game || !game.interactWith) return;
   const s = game.interactWith;
   // tiny debounce so a held key/button can't double-fire
   const now = performance.now();
-  if (game.lastInteract && now - game.lastInteract < 200) return;
+  const dt = now - (game.lastInteract || 0);
+  if (dt > 0 && dt < 200) return;       // robust against frozen/replayed clocks
   game.lastInteract = now || 1;
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
   if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
   if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
-  if (s.kind === 'run')  { exitDojoTo(()=>newGame()); return; }
+  if (s.kind === 'run')  {
+    // If we paused a run to visit the dojo, resume it. Otherwise start fresh.
+    if (runSnapshot) { restoreRun(); }
+    else { exitDojoTo(()=>newGame()); }
+    return;
+  }
   if (s.kind === 'exit') { leaveDojo(); return; }
+  if (s.kind === 'building'){
+    if (s.type === 'dojo') enterDojoFromRun();
+    else if (s.state === 'fresh') springTrap(s);
+    return;
+  }
 }
 function exitDojoTo(fn){
   D('dojo-hud').classList.add('hidden');
@@ -1385,7 +1551,10 @@ function draw(){
   const camX = game.cam.x - VW/2, camY = game.cam.y - VH/2;
 
   if (game.dojoMode) drawDojoRoom();
-  else drawGround(camX, camY, VW, VH);
+  else {
+    drawGround(camX, camY, VW, VH);
+    if (game.buildings) for (const b of game.buildings) drawBuilding(b);
+  }
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
 
@@ -1486,6 +1655,62 @@ function drawStation(s){
   ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
+function drawBuilding(b){
+  ctx.save(); ctx.translate(b.x, b.y);
+  const cleared = b.state === 'cleared';
+  const active  = !cleared && game.interactWith === b;
+  const t = (game ? game.t : 0);
+  // hut silhouette — wider base + roof pitch
+  ctx.beginPath();
+  ctx.moveTo(-b.r*1.15,  b.r*0.55);
+  ctx.lineTo(-b.r*1.15, -b.r*0.10);
+  ctx.lineTo(            0, -b.r*0.95);
+  ctx.lineTo( b.r*1.15, -b.r*0.10);
+  ctx.lineTo( b.r*1.15,  b.r*0.55);
+  ctx.closePath();
+  ctx.fillStyle = cleared ? 'rgba(40,30,18,0.50)' : 'rgba(50,40,22,0.85)';
+  ctx.fill();
+  ctx.strokeStyle = active ? '#e7b53b' : (cleared ? 'rgba(100,80,50,0.55)' : b.color);
+  ctx.lineWidth = active ? 3 : 2;
+  ctx.stroke();
+  // door
+  ctx.fillStyle = cleared ? '#2a1f12' : '#0d0805';
+  ctx.fillRect(-13, -4, 26, b.r*0.6);
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
+  ctx.strokeRect(-13, -4, 26, b.r*0.6);
+  // icon above the door
+  ctx.font = 'bold 28px -apple-system,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.fillStyle = cleared ? 'rgba(160,140,100,0.5)' : '#fff';
+  ctx.fillText(b.ico, 0, -b.r*0.35);
+  ctx.shadowBlur = 0;
+  // cleared X
+  if (cleared){
+    ctx.strokeStyle = 'rgba(216,54,43,0.6)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-16, -16); ctx.lineTo(16, 16);
+    ctx.moveTo(16, -16); ctx.lineTo(-16, 16); ctx.stroke();
+  }
+  // active pulse
+  if (active){
+    const k = (t*2) % 1;
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#e7b53b'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, b.r * (1 + k*0.6), 0, TAU); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  // label + reward tag below
+  ctx.font = 'bold 14px -apple-system,sans-serif';
+  ctx.fillStyle = active ? '#fff' : (cleared ? '#7a6a4a' : '#dac8a0');
+  ctx.fillText(b.name, 0, b.r + 22);
+  if (!cleared && b.type !== 'dojo'){
+    ctx.font = 'bold 11px -apple-system,sans-serif';
+    ctx.fillStyle = active ? '#ffe79b' : 'rgba(231,181,59,0.85)';
+    ctx.fillText(b.tag, 0, b.r + 38);
+  }
+  ctx.restore();
+}
+
 function drawDummy(e){
   ctx.save(); ctx.translate(e.x, e.y);
   const flash = e.hit > 0;
@@ -1536,10 +1761,21 @@ function drawPetal(pt){
 function drawOrb(o){
   ctx.save(); ctx.translate(o.x,o.y);
   const pulse = 1 + Math.sin(game.t*8 + o.x)*0.12;
-  ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=8;
-  ctx.fillStyle = o.xp>1 ? '#7ce8ef' : '#4fd6e0';
-  ctx.beginPath();
-  ctx.moveTo(0,-5*pulse); ctx.lineTo(4*pulse,0); ctx.lineTo(0,5*pulse); ctx.lineTo(-4*pulse,0); ctx.closePath(); ctx.fill();
+  if (o.isReward){
+    // gold treasure chest-ish — bigger and brighter than a ki orb
+    ctx.shadowColor = '#ffd24a'; ctx.shadowBlur = 24*pulse;
+    ctx.fillStyle = '#ffe79b';
+    ctx.beginPath(); ctx.arc(0, 0, 12*pulse, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#8b1f1a';
+    ctx.fillRect(-2, -10, 4, 20);
+    ctx.fillRect(-10, -2, 20, 4);
+  } else {
+    ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=8;
+    ctx.fillStyle = o.xp>1 ? '#7ce8ef' : '#4fd6e0';
+    ctx.beginPath();
+    ctx.moveTo(0,-5*pulse); ctx.lineTo(4*pulse,0); ctx.lineTo(0,5*pulse); ctx.lineTo(-4*pulse,0); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
 }
 
