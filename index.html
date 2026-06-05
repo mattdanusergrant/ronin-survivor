@@ -354,9 +354,9 @@ const BUILDING_TYPES = {
 function generateBuildings(){
   const out = [];
   // dojo always present at a comfortable distance
-  const dojoAng = rand(0, TAU), dojoD = 280;
+  const dojoAng = rand(0, TAU), dojoD = 320;
   out.push(makeBuilding('dojo', Math.cos(dojoAng)*dojoD, Math.sin(dojoAng)*dojoD));
-  // 2 or 3 random traps
+  // 2 or 3 random traps, spread out wider so they don't crowd the dojo
   const trapTypes = ['bandits','shrine','cache'];
   const n = 2 + (Math.random() < 0.6 ? 1 : 0);
   // shuffle
@@ -364,13 +364,17 @@ function generateBuildings(){
   for (let i=0; i<n; i++){
     const type = trapTypes[i];
     let placed = null;
-    for (let a=0; a<30 && !placed; a++){
-      const ang = rand(0, TAU), d = rand(280, 520);
+    for (let a=0; a<40 && !placed; a++){
+      const ang = rand(0, TAU), d = rand(520, 900);
       const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
-      const tooClose = out.some(b => Math.hypot(b.x-x, b.y-y) < 220);
+      const tooClose = out.some(b => Math.hypot(b.x-x, b.y-y) < 380);
       if (!tooClose) placed = { x, y };
     }
-    if (!placed) placed = { x: rand(-450,450), y: rand(-450,450) };
+    if (!placed){
+      // fallback: evenly spaced ring far from spawn
+      const ang = (i / n) * TAU + rand(-0.3, 0.3);
+      placed = { x: Math.cos(ang)*700, y: Math.sin(ang)*700 };
+    }
     out.push(makeBuilding(type, placed.x, placed.y));
   }
   return out;
@@ -397,6 +401,10 @@ function makeBuilding(type, x, y){
       building: b,
       turret: null,
     });
+  }
+  // the dojo arrives already fortified — 4 free watchtowers at each corner
+  if (type === 'dojo'){
+    for (const s of b.slots) s.turret = { cd:0, lastFireAng: s.ang + Math.PI };
   }
   return b;
 }
