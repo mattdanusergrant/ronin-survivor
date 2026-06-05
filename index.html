@@ -378,13 +378,31 @@ function generateBuildings(){
 }
 function makeBuilding(type, x, y){
   const cfg = BUILDING_TYPES[type];
-  return {
+  const b = {
     kind:'building', type, x, y, r:46,
     name:cfg.name, ico:cfg.ico, tag:cfg.tag, color:cfg.color,
     state:'fresh', reward:cfg.reward, enemyCount:cfg.enemyCount,
     enemiesSpawned:[],
+    slots:[],
   };
+  // 4 turret slots at diagonals around the building
+  const SLOT_DIST = 78;
+  for (let i=0; i<4; i++){
+    const ang = (i/4) * TAU + Math.PI/4;   // NE, SE, SW, NW
+    b.slots.push({
+      kind:'slot',
+      x: x + Math.cos(ang) * SLOT_DIST,
+      y: y + Math.sin(ang) * SLOT_DIST,
+      r: 20,
+      ang,
+      building: b,
+      turret: null,
+    });
+  }
+  return b;
 }
+const TURRET_COST = 30;
+const TURRET = { dmg:24, cdMax:0.95, range:240, shotSpeed:520 };
 
 // snapshot/restore the entire run so the dojo can be visited mid-run
 let runSnapshot = null;
@@ -724,6 +742,37 @@ function checkTrapClear(b){
     // celebration sparks
     for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
       fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,1.0), c:'#e7b53b' }); }
+  }
+}
+function updateTurrets(dt){
+  if (!game || !game.buildings || game.dojoMode) return;
+  for (const b of game.buildings){
+    for (const slot of b.slots){
+      const t = slot.turret;
+      if (!t) continue;
+      t.cd -= dt;
+      if (t.cd > 0) continue;
+      // nearest live foe in range (ignore dummies — they're only in the dojo anyway)
+      let near = null, bestD2 = TURRET.range * TURRET.range;
+      for (const e of enemies){
+        if (e.dead || e.dummy) continue;
+        const dx = e.x - slot.x, dy = e.y - slot.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bestD2){ bestD2 = d2; near = e; }
+      }
+      if (!near) continue;
+      t.cd = TURRET.cdMax;
+      const ang = Math.atan2(near.y - slot.y, near.x - slot.x);
+      t.lastFireAng = ang;
+      shots.push({
+        kind:'turretShot',
+        x: slot.x, y: slot.y,
+        vx: Math.cos(ang)*TURRET.shotSpeed, vy: Math.sin(ang)*TURRET.shotSpeed,
+        dmg: TURRET.dmg, r: 5,
+        life: TURRET.range / TURRET.shotSpeed,
+        pierce: 0, rot: ang,
+      });
+    }
   }
 }
 function applyReward(kind){
@@ -1190,6 +1239,7 @@ function update(dt){
   }
 
   fireWeapons(dt);
+  updateTurrets(dt);
 
   // projectiles
   for (const s of shots){
@@ -1407,7 +1457,16 @@ function update(dt){
 function updateDojoStations(){
   const P = player;
   let near = null, bestD2 = Infinity;
-  const candidates = game.dojoMode ? DOJO_STATIONS : (game.buildings || []);
+  // build candidate list: dojo stations in the hub, OR buildings + their empty turret slots in a run
+  const candidates = [];
+  if (game.dojoMode){
+    for (const s of DOJO_STATIONS) candidates.push(s);
+  } else if (game.buildings){
+    for (const b of game.buildings){
+      candidates.push(b);
+      for (const slot of b.slots) if (!slot.turret) candidates.push(slot);
+    }
+  }
   for (const s of candidates){
     // skip cleared trap buildings — no longer interactive
     if (s.kind === 'building' && s.state === 'cleared') continue;
@@ -1425,6 +1484,10 @@ function updateDojoStations(){
       if (near.kind === 'building'){
         if (near.type === 'dojo') label = 'ENTER — ' + near.name;
         else label = `SPRING TRAP — ${near.name} · ${near.tag}`;
+      } else if (near.kind === 'slot'){
+        label = META.ryo >= TURRET_COST
+          ? `PLACE TURRET · ${TURRET_COST} 🪙`
+          : `NEED ${TURRET_COST} 🪙`;
       } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
       else label = 'ENTER — ' + near.name;
       btn.textContent = label;
@@ -1455,6 +1518,19 @@ function dojoActivate(){
   if (s.kind === 'building'){
     if (s.type === 'dojo') enterDojoFromRun();
     else if (s.state === 'fresh') springTrap(s);
+    return;
+  }
+  if (s.kind === 'slot'){
+    if (s.turret) return;
+    if (META.ryo < TURRET_COST){
+      fx.push({ kind:'dmg', x:s.x, y:s.y-26, v:'NEED RYO', t:0, life:1.0, vy:-30 });
+      return;
+    }
+    META.ryo -= TURRET_COST; saveMeta();
+    s.turret = { cd:0, lastFireAng: s.ang + Math.PI };
+    shake = Math.max(shake, 3);
+    for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(60,140);
+      fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#e7b53b' }); }
     return;
   }
 }
@@ -1553,7 +1629,10 @@ function draw(){
   if (game.dojoMode) drawDojoRoom();
   else {
     drawGround(camX, camY, VW, VH);
-    if (game.buildings) for (const b of game.buildings) drawBuilding(b);
+    if (game.buildings) for (const b of game.buildings){
+      drawBuilding(b);
+      for (const slot of b.slots) drawSlot(slot);
+    }
   }
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
@@ -1711,6 +1790,45 @@ function drawBuilding(b){
   ctx.restore();
 }
 
+function drawSlot(slot){
+  ctx.save(); ctx.translate(slot.x, slot.y);
+  if (slot.turret){
+    // base pad
+    ctx.fillStyle = '#3a2a14';
+    ctx.beginPath(); ctx.arc(0, 0, 14, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, 14, 0, TAU); ctx.stroke();
+    // body
+    ctx.fillStyle = '#5a4520';
+    ctx.beginPath(); ctx.moveTo(-7, 4); ctx.lineTo(-5, -10); ctx.lineTo(5, -10); ctx.lineTo(7, 4); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = '#2a1f10'; ctx.stroke();
+    // banner-ish red top
+    ctx.fillStyle = '#8b1f1a';
+    ctx.fillRect(-5, -13, 10, 4);
+    // arrow / aim line pointing at last fire dir
+    ctx.rotate(slot.turret.lastFireAng);
+    ctx.strokeStyle = 'rgba(231,181,59,0.55)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(20, 0); ctx.stroke();
+    ctx.fillStyle = '#cfd3da';
+    ctx.beginPath(); ctx.moveTo(20, 0); ctx.lineTo(15, -2); ctx.lineTo(15, 2); ctx.closePath(); ctx.fill();
+  } else {
+    const active = game && game.interactWith === slot;
+    const afford = META.ryo >= TURRET_COST;
+    ctx.strokeStyle = active ? (afford ? '#e7b53b' : '#d8362b') : 'rgba(120,90,40,0.5)';
+    ctx.lineWidth = active ? 2.5 : 1.5;
+    ctx.setLineDash([5,5]); ctx.lineDashOffset = -((game.t||0)*8);
+    ctx.beginPath(); ctx.arc(0, 0, slot.r, 0, TAU); ctx.stroke();
+    ctx.setLineDash([]);
+    if (active){
+      ctx.font = 'bold 11px -apple-system,sans-serif';
+      ctx.fillStyle = afford ? '#e7b53b' : '#d8362b';
+      ctx.textAlign = 'center';
+      ctx.fillText(`${TURRET_COST} 🪙`, 0, slot.r + 12);
+    }
+  }
+  ctx.restore();
+}
+
 function drawDummy(e){
   ctx.save(); ctx.translate(e.x, e.y);
   const flash = e.hit > 0;
@@ -1861,6 +1979,13 @@ function drawShot(s){
     ctx.shadowBlur=0;
     ctx.fillStyle='#7a5b2a';
     ctx.beginPath(); ctx.arc(0,0,3,0,TAU); ctx.fill();
+  } else if (s.kind==='turretShot'){
+    const ang = Math.atan2(s.vy, s.vx);
+    ctx.rotate(ang);
+    ctx.strokeStyle = '#d8d1b6'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(5, 0); ctx.stroke();
+    ctx.fillStyle = '#cfd3da'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 3;
+    ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(4, -2); ctx.lineTo(4, 2); ctx.closePath(); ctx.fill();
   } else if (s.kind==='arrow'){
     const ang = Math.atan2(s.vy, s.vx);
     ctx.rotate(ang);
