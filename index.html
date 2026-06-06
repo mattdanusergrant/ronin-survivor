@@ -658,7 +658,6 @@ function newGame(){
   };
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
-  game.streamAcc = 0;                  // dojo-bound marcher spawn timer
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   game.buildings = generateBuildings();
@@ -728,24 +727,28 @@ const ENEMY_TYPES = {
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
 function spawnInterval(){ return Math.max(0.18, 0.72 - game.t * 0.0045); }
-function streamInterval(){ return Math.max(1.0, 3.0 - game.t * 0.012); }   // marchers — slow but steady
+// Per fresh-camp stream cadence. With 3 fresh camps that's ~1.7s/marcher
+// at game start, closing toward ~0.83s late. Clearing a camp permanently
+// shuts off that lane.
+function campStreamInterval(){ return Math.max(2.5, 5.0 - game.t * 0.020); }
 
-function spawnDojoStreamEnemy(){
+function spawnMarcherFromCamp(camp){
   if (!game || !game.buildings) return;
   const dojo = game.buildings.find(b => b.type === 'dojo');
   if (!dojo) return;
+  // emerge at the camp's perimeter so they look like they walked out of the door
   const ang = rand(0, TAU);
-  const d   = 760 + rand(0, 240);     // well outside turret range, drifting in
+  const d   = camp.r + 10 + rand(0, 14);
   const t   = ENEMY_TYPES.footpad;
   const tm  = timeMul();
   enemies.push({
-    x: dojo.x + Math.cos(ang)*d,
-    y: dojo.y + Math.sin(ang)*d,
+    x: camp.x + Math.cos(ang)*d,
+    y: camp.y + Math.sin(ang)*d,
     r: t.r, hp: t.hp * tm, maxhp: t.hp * tm,
-    speed: t.speed * 0.55,            // wandering pace, not a chase sprint
+    speed: t.speed * 0.55,
     dmg: t.dmg, xp: t.xp, color: t.color,
     hit: 0, boss: false, sep: 0,
-    state: 'march', marchTo: dojo,
+    state: 'march', marchTo: dojo, fromCamp: camp,
     sight: t.sight, callR: t.callR,
     wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
   });
@@ -1220,10 +1223,16 @@ function update(dt){
     while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
     game.bossT += dt;
     if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
-    // marcher stream — basic footpads drifting toward the dojo
-    game.streamAcc += dt;
-    const sWant = streamInterval();
-    while (game.streamAcc >= sWant){ game.streamAcc -= sWant; spawnDojoStreamEnemy(); }
+    // marchers — each FRESH camp emits its own slow stream toward the dojo.
+    // Clearing a camp permanently shuts off that lane.
+    if (game.buildings){
+      const ci = campStreamInterval();
+      for (const b of game.buildings){
+        if (b.type === 'dojo' || b.state !== 'fresh') continue;
+        b.streamAcc = (b.streamAcc || 0) + dt;
+        while (b.streamAcc >= ci){ b.streamAcc -= ci; spawnMarcherFromCamp(b); }
+      }
+    }
   }
 
   // enemies — state machine (wander → alert → chase) + group charge + contact
