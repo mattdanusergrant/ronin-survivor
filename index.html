@@ -658,16 +658,18 @@ function newGame(){
   };
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
+  game.streamAcc = 0;                  // dojo-bound marcher spawn timer
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   game.buildings = generateBuildings();
+  // spawn the samurai right on the Dojo door, between the four pre-armed turrets
+  const dojoB = game.buildings.find(b => b.type === 'dojo');
+  if (dojoB){ player.x = dojoB.x; player.y = dojoB.y; }
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // seed a starting crowd — they wander idly until they notice you, so the
-  // road feels populated from the first second. Spread across a band of
-  // distances (some on-screen, some just beyond) all around the player.
-  for (let i=0;i<22;i++) spawnEnemy(false, rand(160, 520));
+  // light seed crowd around the Dojo — the rest comes from the marcher stream
+  for (let i=0;i<6;i++) spawnEnemy(false, rand(380, 620));
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -726,6 +728,28 @@ const ENEMY_TYPES = {
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
 function spawnInterval(){ return Math.max(0.18, 0.72 - game.t * 0.0045); }
+function streamInterval(){ return Math.max(1.0, 3.0 - game.t * 0.012); }   // marchers — slow but steady
+
+function spawnDojoStreamEnemy(){
+  if (!game || !game.buildings) return;
+  const dojo = game.buildings.find(b => b.type === 'dojo');
+  if (!dojo) return;
+  const ang = rand(0, TAU);
+  const d   = 760 + rand(0, 240);     // well outside turret range, drifting in
+  const t   = ENEMY_TYPES.footpad;
+  const tm  = timeMul();
+  enemies.push({
+    x: dojo.x + Math.cos(ang)*d,
+    y: dojo.y + Math.sin(ang)*d,
+    r: t.r, hp: t.hp * tm, maxhp: t.hp * tm,
+    speed: t.speed * 0.55,            // wandering pace, not a chase sprint
+    dmg: t.dmg, xp: t.xp, color: t.color,
+    hit: 0, boss: false, sep: 0,
+    state: 'march', marchTo: dojo,
+    sight: t.sight, callR: t.callR,
+    wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
+  });
+}
 
 function spawnEnemy(boss=false, distOverride=null){
   const ang = rand(0, TAU), dist = distOverride !== null ? distOverride : Math.max(W,H)/viewScale * 0.62 + 40;
@@ -1196,6 +1220,10 @@ function update(dt){
     while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
     game.bossT += dt;
     if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
+    // marcher stream — basic footpads drifting toward the dojo
+    game.streamAcc += dt;
+    const sWant = streamInterval();
+    while (game.streamAcc >= sWant){ game.streamAcc -= sWant; spawnDojoStreamEnemy(); }
   }
 
   // enemies — state machine (wander → alert → chase) + group charge + contact
@@ -1214,10 +1242,20 @@ function update(dt){
 
     const dx = P.x-e.x, dy = P.y-e.y, d = Math.hypot(dx,dy) || 1;
 
-    // perception: wandering enemy spots player within sight radius
-    if (e.state === 'wander' && d < e.sight) e.state = 'alert', e.alertT = rand(0.3, 0.5);
+    // perception: wandering or marching enemy spots player within sight radius
+    if ((e.state === 'wander' || e.state === 'march') && d < e.sight){
+      e.state = 'alert'; e.alertT = rand(0.3, 0.5);
+    }
 
-    if (e.state === 'wander'){
+    if (e.state === 'march'){
+      // steady drift toward the marcher's target building (the Dojo)
+      const t = e.marchTo;
+      if (t){
+        const tdx = t.x - e.x, tdy = t.y - e.y, td = Math.hypot(tdx,tdy) || 1;
+        e.x += tdx/td * e.speed * dt;
+        e.y += tdy/td * e.speed * dt;
+      }
+    } else if (e.state === 'wander'){
       e.wTimer -= dt;
       if (e.wTimer <= 0){
         e.wDir = rand(0, TAU);
@@ -1230,10 +1268,11 @@ function update(dt){
       e.alertT -= dt;
       if (e.alertT <= 0){
         e.state = 'chase';
-        // call nearby allies (one-shot — only wanderers respond)
+        // call nearby allies (wanderers AND marchers respond)
         const cr2 = e.callR * e.callR;
         for (const a of enemies){
-          if (a === e || a.boss || a.state !== 'wander') continue;
+          if (a === e || a.boss) continue;
+          if (a.state !== 'wander' && a.state !== 'march') continue;
           const ax = a.x-e.x, ay = a.y-e.y;
           if (ax*ax + ay*ay < cr2){ a.state = 'alert'; a.alertT = rand(0.25, 0.45); }
         }
@@ -1468,6 +1507,12 @@ function update(dt){
     if (e.fromTrap && !e.dead) return true;
     if (e.dead) return false;
     if (e.boss) return true;
+    // marchers persist as long as they're still within range of their target dojo,
+    // even if the player has wandered far away
+    if (e.state === 'march' && e.marchTo){
+      const tdx = e.x - e.marchTo.x, tdy = e.y - e.marchTo.y;
+      if (tdx*tdx + tdy*tdy < cullR2) return true;
+    }
     const dx = e.x - player.x, dy = e.y - player.y;
     return dx*dx + dy*dy < cullR2;
   });
