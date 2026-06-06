@@ -292,10 +292,12 @@ const DOJO_STATIONS = [
   { id:'smithy', name:'Smithy',         ico:'🗡️', x:-145, y:-300, r:36, kind:'shop', group:'combat' },
   { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-300, r:36, kind:'shop', group:'defense' },
   { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 145, y:-300, r:36, kind:'shop', group:'utility' },
+  { id:'pit',    name:'Resurrection Pit', ico:'☠️', x:-185, y:   0, r:38, kind:'pit' },
   { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-130, y: 290, r:36, kind:'game', action:'soccer' },
   { id:'volley', name:'Samurai Volley', ico:'🏐', x: 130, y: 290, r:36, kind:'game', action:'volley' },
   { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 395, r:40, kind:'run' },
 ];
+const PIT_COST = 50;
 const DOJO_DUMMIES = [  // four dummies stacked along the right wall
   { x: 180, y: -130 }, { x: 180, y: -45 }, { x: 180, y: 40 }, { x: 180, y: 125 },
 ];
@@ -305,10 +307,12 @@ function startDojo(){
   elPauseBtn.classList.add('hidden');  // no pause in the dojo
   D('dojo-hud').classList.remove('hidden');
   D('dojo-interact').classList.add('hidden');
-  // game state — peaceful dojo mode
+  // game state — peaceful dojo mode. deathPending is derived from the run
+  // snapshot so it survives round-trips through soccer/volley/shop overlays.
   game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 5,
            spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
-           interactWith: null, lastInteract: 0 };
+           interactWith: null, lastInteract: 0,
+           deathPending: !!(runSnapshot && runSnapshot.deathPending) };
   player = {
     x: 0, y: 0, r: 14, hp: 100, maxhp: 100, speed: 296, baseSpeed: 296,
     power: 1, haste: 1, magnet: 1, xpMult: 1, regen: 0,
@@ -334,9 +338,13 @@ function startDojo(){
 }
 function refreshDojoHud(){
   D('dojo-hud-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
-  D('dojo-hud-hint').textContent = 'Walk to a station';
+  D('dojo-hud-hint').textContent = (game && game.deathPending)
+    ? '☠ You fell. Resurrect at the Pit'
+    : 'Walk to a station';
 }
 function leaveDojo(){
+  // if the player walked out with a dying run on hold, that's a commitment
+  if (runSnapshot && runSnapshot.deathPending) commitDeadRun();
   game = null;
   runSnapshot = null;   // chose to leave instead of gate → abandon any paused run
   D('dojo-hud').classList.add('hidden');
@@ -448,6 +456,22 @@ function enterDojoFromRun(){
   if (!game || game.dojoMode) return;
   snapshotRun();
   startDojo();
+}
+// Player died mid-run: keep the run snapshotted (deathPending) and drop the
+// samurai into the dojo. From there they can pay the Pit to revive on the
+// death tile, or commit to game-over by walking to the Road / Leave.
+function transportToDojoAfterDeath(){
+  if (!game || game.dojoMode) return;
+  snapshotRun();
+  runSnapshot.deathPending = true;
+  startDojo();  // startDojo derives game.deathPending from the snapshot
+}
+// Player chose to abandon a death-pending run (gate or leave). Award stats on
+// the snapshot's game state, then clear it.
+function commitDeadRun(){
+  if (!runSnapshot || !runSnapshot.deathPending) return;
+  awardRunStats(runSnapshot.game);
+  runSnapshot = null;
 }
 
 // ---------- META PROGRESSION (The Dojo) ----------
@@ -611,7 +635,7 @@ const PASSIVES = {
 // =====================================================================
 function newGame(){
   game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:5, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
-           interactWith:null, lastInteract:0 };
+           interactWith:null, lastInteract:0, dojoLocked:true };
   // run-mode interact button uses the same DOM element as the dojo's, just no Ryo HUD around it
   D('dojo-interact').classList.add('hidden');
   player = {
@@ -1230,7 +1254,7 @@ function update(dt){
           P.revives--; P.hp = P.maxhp * 0.5; P.inv = 1.6; shake = Math.max(shake, 14);
           for (let i=0;i<24;i++){ const a=rand(0,TAU), sp=rand(120,260);
             fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
-        } else { P.hp = 0; gameOver(false); return; }
+        } else { P.hp = 0; transportToDojoAfterDeath(); return; }
       }
     }
   }
@@ -1478,6 +1502,8 @@ function updateDojoStations(){
     // skip cleared trap buildings — no longer interactive
     if (s.kind === 'building' && s.state === 'cleared') continue;
     if (s.kind === 'building' && s.state === 'active' && s.type !== 'dojo') continue;
+    // world dojo is sealed once you step onto The Road; only death gets you back
+    if (s.kind === 'building' && s.type === 'dojo' && game.dojoLocked) continue;
     const dx = s.x-P.x, dy = s.y-P.y;
     const rr = s.r + P.r;
     const d2 = dx*dx + dy*dy;
@@ -1495,6 +1521,14 @@ function updateDojoStations(){
         label = META.ryo >= TURRET_COST
           ? `PLACE TURRET · ${TURRET_COST} 🪙`
           : `NEED ${TURRET_COST} 🪙`;
+      } else if (near.kind === 'pit'){
+        if (game.deathPending){
+          label = META.ryo >= PIT_COST
+            ? `RESURRECT · ${PIT_COST} 🪙`
+            : `NEED ${PIT_COST} 🪙 TO RESURRECT`;
+        } else {
+          label = 'The Pit is silent';
+        }
       } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
       else label = 'ENTER — ' + near.name;
       btn.textContent = label;
@@ -1515,10 +1549,35 @@ function dojoActivate(){
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
   if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
   if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
+  if (s.kind === 'pit'){
+    if (!game.deathPending) return;
+    if (META.ryo < PIT_COST){
+      fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED RYO', t:0, life:1.0, vy:-30 });
+      return;
+    }
+    META.ryo -= PIT_COST; saveMeta();
+    // restore the run; revive with 50% HP and a beat of i-frames
+    if (runSnapshot) runSnapshot.deathPending = false;
+    if (restoreRun()){
+      player.hp = Math.max(1, Math.floor(player.maxhp * 0.5));
+      player.inv = 1.8; shake = Math.max(shake, 12);
+      for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
+        fx.push({ kind:'spark', x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c:'#ffe79b' }); }
+    }
+    return;
+  }
   if (s.kind === 'run')  {
-    // If we paused a run to visit the dojo, resume it. Otherwise start fresh.
-    if (runSnapshot) { restoreRun(); }
-    else { exitDojoTo(()=>newGame()); }
+    // Paused mid-run dojo visit (no death) → resume run, dojo stays locked.
+    // Dying run → commit death (award Ryo), then start fresh.
+    // Title → fresh run.
+    if (runSnapshot && runSnapshot.deathPending){
+      commitDeadRun();
+      exitDojoTo(()=>newGame());
+    } else if (runSnapshot){
+      restoreRun();
+    } else {
+      exitDojoTo(()=>newGame());
+    }
     return;
   }
   if (s.kind === 'exit') { leaveDojo(); return; }
@@ -1717,35 +1776,43 @@ function drawStation(s){
   ctx.save(); ctx.translate(s.x, s.y);
   const active = game && game.interactWith === s;
   const t = (game ? game.t : 0);
+  // pit lights up red when there's a death pending; silent otherwise
+  const pitArmed = s.kind === 'pit' && game && game.deathPending;
+  const pitSilent = s.kind === 'pit' && game && !game.deathPending;
+  const accent = pitArmed ? '#d8362b' : '#e7b53b';
+  const accentRGBA = pitArmed ? 'rgba(216,54,43,0.30)' : 'rgba(231,181,59,0.30)';
   // floor pad
-  ctx.fillStyle = active ? 'rgba(231,181,59,0.30)' : 'rgba(89,69,32,0.40)';
-  ctx.strokeStyle = active ? '#e7b53b' : 'rgba(120,90,40,0.85)';
+  ctx.fillStyle = active ? accentRGBA : (pitArmed ? 'rgba(216,54,43,0.20)' : 'rgba(89,69,32,0.40)');
+  ctx.strokeStyle = active ? accent : (pitArmed ? accent : 'rgba(120,90,40,0.85)');
   ctx.lineWidth = active ? 3 : 2;
   ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill(); ctx.stroke();
-  // pulse ring when active
-  if (active){
-    const k = (t*2) % 1;
-    ctx.globalAlpha = 1 - k;
-    ctx.strokeStyle = '#e7b53b'; ctx.lineWidth = 2;
+  // pulse: while active, OR if pit is armed (a constant beckoning)
+  if (active || pitArmed){
+    const k = (t * (pitArmed ? 1.5 : 2)) % 1;
+    ctx.globalAlpha = (1 - k) * (active ? 1 : 0.7);
+    ctx.strokeStyle = accent; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(0,0, s.r * (1 + k*0.6), 0, TAU); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   // icon
   ctx.font = 'bold 34px -apple-system,sans-serif';
-  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+  ctx.textAlign = 'center'; ctx.fillStyle = pitSilent ? 'rgba(255,255,255,0.45)' : '#fff';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
   ctx.fillText(s.ico, 0, 12);
   ctx.shadowBlur = 0;
   // label
   ctx.font = 'bold 16px -apple-system,sans-serif';
-  ctx.fillStyle = active ? '#fff' : '#dac8a0';
+  ctx.fillStyle = active ? '#fff' : (pitSilent ? '#7a6a4a' : '#dac8a0');
   ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
 function drawBuilding(b){
   ctx.save(); ctx.translate(b.x, b.y);
   const cleared = b.state === 'cleared';
-  const active  = !cleared && game.interactWith === b;
+  const locked  = b.type === 'dojo' && game && game.dojoLocked;
+  const active  = !cleared && !locked && game.interactWith === b;
   const t = (game ? game.t : 0);
+  const dim = cleared || locked;
   // hut silhouette — wider base + roof pitch
   ctx.beginPath();
   ctx.moveTo(-b.r*1.15,  b.r*0.55);
@@ -1754,13 +1821,13 @@ function drawBuilding(b){
   ctx.lineTo( b.r*1.15, -b.r*0.10);
   ctx.lineTo( b.r*1.15,  b.r*0.55);
   ctx.closePath();
-  ctx.fillStyle = cleared ? 'rgba(40,30,18,0.50)' : 'rgba(50,40,22,0.85)';
+  ctx.fillStyle = dim ? 'rgba(40,30,18,0.50)' : 'rgba(50,40,22,0.85)';
   ctx.fill();
-  ctx.strokeStyle = active ? '#e7b53b' : (cleared ? 'rgba(100,80,50,0.55)' : b.color);
+  ctx.strokeStyle = active ? '#e7b53b' : (dim ? 'rgba(100,80,50,0.55)' : b.color);
   ctx.lineWidth = active ? 3 : 2;
   ctx.stroke();
   // door
-  ctx.fillStyle = cleared ? '#2a1f12' : '#0d0805';
+  ctx.fillStyle = dim ? '#2a1f12' : '#0d0805';
   ctx.fillRect(-13, -4, 26, b.r*0.6);
   ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1;
   ctx.strokeRect(-13, -4, 26, b.r*0.6);
@@ -1768,14 +1835,21 @@ function drawBuilding(b){
   ctx.font = 'bold 28px -apple-system,sans-serif';
   ctx.textAlign = 'center';
   ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-  ctx.fillStyle = cleared ? 'rgba(160,140,100,0.5)' : '#fff';
+  ctx.fillStyle = dim ? 'rgba(160,140,100,0.5)' : '#fff';
   ctx.fillText(b.ico, 0, -b.r*0.35);
   ctx.shadowBlur = 0;
-  // cleared X
+  // cleared X / locked padlock
   if (cleared){
     ctx.strokeStyle = 'rgba(216,54,43,0.6)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(-16, -16); ctx.lineTo(16, 16);
     ctx.moveTo(16, -16); ctx.lineTo(-16, 16); ctx.stroke();
+  } else if (locked){
+    // padlock symbol over the door
+    ctx.font = 'bold 22px -apple-system,sans-serif';
+    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
+    ctx.fillStyle = '#cfd3da';
+    ctx.fillText('🔒', 0, b.r*0.32);
+    ctx.shadowBlur = 0;
   }
   // active pulse
   if (active){
@@ -1787,12 +1861,16 @@ function drawBuilding(b){
   }
   // label + reward tag below
   ctx.font = 'bold 14px -apple-system,sans-serif';
-  ctx.fillStyle = active ? '#fff' : (cleared ? '#7a6a4a' : '#dac8a0');
+  ctx.fillStyle = active ? '#fff' : (dim ? '#7a6a4a' : '#dac8a0');
   ctx.fillText(b.name, 0, b.r + 22);
   if (!cleared && b.type !== 'dojo'){
     ctx.font = 'bold 11px -apple-system,sans-serif';
     ctx.fillStyle = active ? '#ffe79b' : 'rgba(231,181,59,0.85)';
     ctx.fillText(b.tag, 0, b.r + 38);
+  } else if (locked){
+    ctx.font = 'bold 11px -apple-system,sans-serif';
+    ctx.fillStyle = '#7a6a4a';
+    ctx.fillText('— sealed until you fall —', 0, b.r + 38);
   }
   ctx.restore();
 }
@@ -2255,16 +2333,24 @@ function togglePause(){
   if (game.state===STATE.PLAY){ game.state=STATE.PAUSED; showOnly(elPaused); }
   else if (game.state===STATE.PAUSED){ game.state=STATE.PLAY; showOnly(null); }
 }
+function awardRunStats(g){
+  const p = (g === game ? player : (runSnapshot && runSnapshot.player) || player);
+  const earned = (function(){
+    const base = g.kills * 1 + (g.bossKills||0) * 30 + Math.floor(g.t) * 0.6 + g.level * 4;
+    const mult = p.ryoMult || 1;
+    return Math.max(1, Math.floor(base * mult));
+  })();
+  META.ryo += earned; META.totalRyo += earned; META.runs += 1;
+  META.totalKills += g.kills;
+  if (g.t > META.bestTime) META.bestTime = g.t;
+  if (g.level > META.bestLevel) META.bestLevel = g.level;
+  saveMeta();
+  return earned;
+}
 function gameOver(win){
   game.state = STATE.OVER;
   const m = Math.floor(game.t/60), s = Math.floor(game.t%60);
-  // award Ryo + bank lifetime stats
-  const earned = computeRyo();
-  META.ryo += earned; META.totalRyo += earned; META.runs += 1;
-  META.totalKills += game.kills;
-  if (game.t > META.bestTime) META.bestTime = game.t;
-  if (game.level > META.bestLevel) META.bestLevel = game.level;
-  saveMeta();
+  const earned = awardRunStats(game);
   D('overstats').innerHTML =
     `<span>Survived <b>${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}</b></span>`+
     `<span>Felled <b>${game.kills}</b></span>`+
@@ -2273,7 +2359,7 @@ function gameOver(win){
   D('overttl').textContent = win ? 'YOU SURVIVED' : 'YOU FELL';
   D('over-ryo').innerHTML = `+<b>${earned}</b> 🪙 Ryo earned · <b>${META.ryo}</b> banked`;
   D('overflavor').textContent = win ? 'The road to No.1 continues.' :
-    (game.t < 60 ? 'Even masters bleed. Sharpen, and walk again.' : 'A worthy stand. The blade remembers.');
+    (g => g.t < 60 ? 'Even masters bleed. Sharpen, and walk again.' : 'A worthy stand. The blade remembers.')(game);
   elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden');
   showOnly(elOver);
 }
