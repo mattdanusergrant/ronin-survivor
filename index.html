@@ -288,7 +288,6 @@ let optionsReturnTo = null;  // remember which overlay to restore on Back
 // Portrait room — phones are tall, so the dojo is too.
 const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 const DOJO_STATIONS = [
-  { id:'leave',  name:'Leave Dojo',     ico:'🚪', x:-185, y:-390, r:26, kind:'exit' },
   { id:'smithy', name:'Smithy',         ico:'🗡️', x:-145, y:-300, r:36, kind:'shop', group:'combat' },
   { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-300, r:36, kind:'shop', group:'defense' },
   { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 145, y:-300, r:36, kind:'shop', group:'utility' },
@@ -338,9 +337,11 @@ function startDojo(){
 }
 function refreshDojoHud(){
   D('dojo-hud-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
-  D('dojo-hud-hint').textContent = (game && game.deathPending)
-    ? '☠ You fell. Resurrect at the Pit'
-    : 'Walk to a station';
+  let hint;
+  if (game && game.deathPending) hint = '☠ Step into the Pit to return';
+  else if (META.pitArmed) hint = '🔥 Pit is armed for your next death';
+  else hint = 'Arm the Pit before you fall';
+  D('dojo-hud-hint').textContent = hint;
 }
 function leaveDojo(){
   // if the player walked out with a dying run on hold, that's a commitment
@@ -462,9 +463,20 @@ function enterDojoFromRun(){
 // death tile, or commit to game-over by walking to the Road / Leave.
 function transportToDojoAfterDeath(){
   if (!game || game.dojoMode) return;
-  snapshotRun();
-  runSnapshot.deathPending = true;
-  startDojo();  // startDojo derives game.deathPending from the snapshot
+  if (META.pitArmed){
+    // armed Pit catches you — preserve everything, consume the arm
+    snapshotRun();
+    runSnapshot.deathPending = true;
+    META.pitArmed = false;
+    saveMeta();
+  } else {
+    // Pit unarmed: standard death — bank Ryo now, the run is over for real
+    awardRunStats(game);
+  }
+  startDojo();
+  // either way, you respawn standing in the Pit
+  const pit = DOJO_STATIONS.find(s => s.id === 'pit');
+  if (pit && player){ player.x = pit.x; player.y = pit.y; }
 }
 // Player chose to abandon a death-pending run (gate or leave). Award stats on
 // the snapshot's game state, then clear it.
@@ -478,7 +490,7 @@ function commitDeadRun(){
 // Persistent Ryo currency + permanent upgrades bought between runs.
 const META_KEY = 'ronin-meta-v1';
 const META = (function(){
-  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0 };
+  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0, pitArmed:false };
   try {
     const m = Object.assign(defaults, JSON.parse(localStorage.getItem(META_KEY) || '{}'));
     m.up = m.up || {};
@@ -1523,11 +1535,13 @@ function updateDojoStations(){
           : `NEED ${TURRET_COST} 🪙`;
       } else if (near.kind === 'pit'){
         if (game.deathPending){
-          label = META.ryo >= PIT_COST
-            ? `RESURRECT · ${PIT_COST} 🪙`
-            : `NEED ${PIT_COST} 🪙 TO RESURRECT`;
+          label = 'RESURRECT';
+        } else if (META.pitArmed){
+          label = '🔥 PIT ARMED';
         } else {
-          label = 'The Pit is silent';
+          label = META.ryo >= PIT_COST
+            ? `ARM PIT · ${PIT_COST} 🪙`
+            : `NEED ${PIT_COST} 🪙 TO ARM`;
         }
       } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
       else label = 'ENTER — ' + near.name;
@@ -1550,20 +1564,27 @@ function dojoActivate(){
   if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
   if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
   if (s.kind === 'pit'){
-    if (!game.deathPending) return;
+    if (game.deathPending){
+      // free resurrect — you paid for this by arming before the run
+      if (runSnapshot) runSnapshot.deathPending = false;
+      if (restoreRun()){
+        player.hp = Math.max(1, Math.floor(player.maxhp * 0.5));
+        player.inv = 1.8; shake = Math.max(shake, 12);
+        for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
+          fx.push({ kind:'spark', x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c:'#ffe79b' }); }
+      }
+      return;
+    }
+    if (META.pitArmed) return;            // already armed, nothing to do
     if (META.ryo < PIT_COST){
       fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED RYO', t:0, life:1.0, vy:-30 });
       return;
     }
-    META.ryo -= PIT_COST; saveMeta();
-    // restore the run; revive with 50% HP and a beat of i-frames
-    if (runSnapshot) runSnapshot.deathPending = false;
-    if (restoreRun()){
-      player.hp = Math.max(1, Math.floor(player.maxhp * 0.5));
-      player.inv = 1.8; shake = Math.max(shake, 12);
-      for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
-        fx.push({ kind:'spark', x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c:'#ffe79b' }); }
-    }
+    META.ryo -= PIT_COST; META.pitArmed = true; saveMeta();
+    refreshDojoHud();
+    shake = Math.max(shake, 4);
+    for (let i=0;i<14;i++){ const a=rand(0,TAU), sp=rand(60,160);
+      fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#d8362b' }); }
     return;
   }
   if (s.kind === 'run')  {
@@ -1776,9 +1797,9 @@ function drawStation(s){
   ctx.save(); ctx.translate(s.x, s.y);
   const active = game && game.interactWith === s;
   const t = (game ? game.t : 0);
-  // pit lights up red when there's a death pending; silent otherwise
-  const pitArmed = s.kind === 'pit' && game && game.deathPending;
-  const pitSilent = s.kind === 'pit' && game && !game.deathPending;
+  // pit lights up red if armed OR a death is pending; dim when neither
+  const pitArmed = s.kind === 'pit' && game && (game.deathPending || META.pitArmed);
+  const pitSilent = s.kind === 'pit' && game && !game.deathPending && !META.pitArmed;
   const accent = pitArmed ? '#d8362b' : '#e7b53b';
   const accentRGBA = pitArmed ? 'rgba(216,54,43,0.30)' : 'rgba(231,181,59,0.30)';
   // floor pad
