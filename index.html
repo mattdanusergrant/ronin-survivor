@@ -87,6 +87,9 @@
     border-radius:50%; background:#cfd3da; transition:left .15s;}
   .opt.on .sw{background:var(--blood);}
   .opt.on .sw::after{left:20px;}
+  .opt .modetag{color:var(--gold); font-size:12px; font-weight:700; letter-spacing:2px;
+    padding:4px 12px; border:1px solid #4a3a14; border-radius:6px; background:#1c160a;
+    text-transform:uppercase;}
 
   /* ryo line + dojo */
   .ryoline{font-size:14px; color:var(--gold); letter-spacing:.5px;}
@@ -183,6 +186,7 @@
     <h1 style="font-size:24px">SETTINGS</h1>
     <div class="opts">
       <div class="opt" id="opt-joystick"><span>Show on-screen joystick</span><span class="sw"></span></div>
+      <div class="opt" id="opt-upgrademode"><span>Upgrade style</span><span class="modetag" id="opt-upgrademode-label">Classic</span></div>
     </div>
     <div class="btn btn-sec" id="opt-soccer" style="margin-top:8px">⚽ Samurai Soccer</div>
     <div class="btn btn-sec" id="opt-volley">🏐 Samurai Volleyball</div>
@@ -277,7 +281,7 @@ const elDojo = D('dojo');
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
 const SETTINGS = (function(){
-  const defaults = { joystick: false };
+  const defaults = { joystick: false, upgradeMode: 'classic' };
   try { return Object.assign(defaults, JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}')); }
   catch { return defaults; }
 })();
@@ -642,6 +646,24 @@ const PASSIVES = {
   greed:  { name:'Ambition',     ico:'💠', desc:'+20% ki gained',          cap:5, apply:p=>p.xpMult*=1.20 },
 };
 
+// ---------- MINIMAL UPGRADE POOL ----------
+// Used when SETTINGS.upgradeMode === 'minimal'. Each level-up rolls 3 cards
+// drawn mostly from this pool (sword-focused) plus a low-probability slot for
+// one of the grounded-in-reality rare weapons.
+const MINIMAL_UPGRADES = {
+  sword_speed: { name:'Sword Speed',  ico:'⚔️', desc:'-10% sword cooldown',  cap:5, apply:p=>p.swordCdMult*=0.90 },
+  sword_range: { name:'Sword Range',  ico:'⚔️', desc:'+15 sword reach',       cap:5, apply:p=>p.swordRangeBonus+=15 },
+  sword_area:  { name:'Sword Sweep',  ico:'⚔️', desc:'+0.15 rad sword arc',   cap:5, apply:p=>p.swordArcBonus+=0.15 },
+  sword_dmg:   { name:'Sword Edge',   ico:'⚔️', desc:'+3 sword damage',       cap:6, apply:p=>p.swordDmgBonus+=3 },
+  move:        { name:'Swift Step',   ico:'👣', desc:'+8% move speed',        cap:5, apply:p=>{p.speed*=1.08; p.baseSpeed*=1.08;} },
+  health:      { name:'Vitality',     ico:'❤️', desc:'+15 max HP (and heal)', cap:6, apply:p=>{p.maxhp+=15; p.hp+=15;} },
+  regen:       { name:'Calm Breath',  ico:'🍵', desc:'+0.4 HP / sec',         cap:5, apply:p=>p.regen+=0.4 },
+  base_dmg:    { name:'Edge Bonus',   ico:'🔪', desc:'+10% all damage',       cap:6, apply:p=>p.power*=1.10 },
+};
+// Grounded-in-reality weapons; rare picks in minimal mode.
+const MINIMAL_RARE_WEAPONS = ['shuriken', 'kunai', 'spear'];
+const MINIMAL_WEAPON_CHANCE = 0.15;   // per-slot odds the card is a rare weapon
+
 // =====================================================================
 //  SETUP / RESET
 // =====================================================================
@@ -655,6 +677,9 @@ function newGame(){
     power:1, haste:1, magnet:1, xpMult:1, regen:0,
     inv:0, hurt:0, weapons:{ katana:1 }, passives:{}, walkPhase:0, moving:false,
     armor:0, revives:0, ryoMult:1, bonusWeapons:0,
+    // sword-specific bonuses applied by the minimal upgrade pool (no-op in classic)
+    swordCdMult:1, swordRangeBonus:0, swordArcBonus:0, swordDmgBonus:0,
+    minimalUpgrades:{},
   };
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
@@ -909,28 +934,32 @@ function rebuildOrbit(){
 
 function fireWeapons(dt){
   const P = player, hz = P.haste;
-  // KATANA — quick forward slash; only swings when a foe is in reach
+  // KATANA — quick forward slash; only swings when a foe is in reach.
+  // Sword bonuses (swordCdMult/Range/Arc/DmgBonus) are 1/0/0/0 in classic mode
+  // and only meaningful when the minimal upgrade pool grants them.
   if (P.weapons.katana){
     if (cd.katana > 0) cd.katana -= dt;
     const s = katStats(P.weapons.katana);
+    const range = s.range + (P.swordRangeBonus || 0);
+    const arc   = s.arc   + (P.swordArcBonus   || 0);
     if (cd.katana <= 0){
       // find nearest in-range enemy
       let target = null, bestD = Infinity;
       for (const e of enemies){
         if (e.dead) continue;
         const d = Math.hypot(e.x-P.x, e.y-P.y);
-        if (d < s.range + e.r && d < bestD){ bestD = d; target = e; }
+        if (d < range + e.r && d < bestD){ bestD = d; target = e; }
       }
       if (target){
-        cd.katana = s.cd/1000 * hz;
+        cd.katana = s.cd/1000 * hz * (P.swordCdMult || 1);
         const ang = Math.atan2(target.y-P.y, target.x-P.x);
         lastAng = ang;
-        const dmg = s.dmg * P.power, halfArc = s.arc/2;
-        blades.push({ kind:'arc', ang, range:s.range, arc:s.arc, t:0, life:.16, side:1 });
+        const dmg = (s.dmg + (P.swordDmgBonus || 0)) * P.power, halfArc = arc/2;
+        blades.push({ kind:'arc', ang, range, arc, t:0, life:.16, side:1 });
         for (const e of enemies){
           if (e.dead) continue;
           const dx = e.x-P.x, dy = e.y-P.y, d = Math.hypot(dx,dy);
-          if (d >= s.range + e.r) continue;
+          if (d >= range + e.r) continue;
           let da = Math.atan2(dy, dx) - ang;
           while (da > Math.PI) da -= TAU;
           while (da < -Math.PI) da += TAU;
@@ -1713,9 +1742,37 @@ function buildOptions(){
   if (chosen.length === 0) chosen = [{ kind:'heal' }];
   return chosen;
 }
+// Minimal pool: most slots are sword/stat upgrades; weapons are a rare drop.
+function buildMinimalOptions(){
+  const P = player;
+  const statOpts = [];
+  for (const id in MINIMAL_UPGRADES){
+    const lv = (P.minimalUpgrades && P.minimalUpgrades[id]) || 0;
+    if (lv < MINIMAL_UPGRADES[id].cap) statOpts.push({ kind:'minimal', id });
+  }
+  const weaponOpts = [];
+  for (const wId of MINIMAL_RARE_WEAPONS){
+    const lv = P.weapons[wId] || 0;
+    if (lv < WEAPONS[wId].max) weaponOpts.push({ kind:'rare-weapon', id: wId });
+  }
+  // shuffle both pools
+  for (const arr of [statOpts, weaponOpts]){
+    for (let i=arr.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  }
+  // 3 slots; each rolls weapon vs stat independently
+  const chosen = [];
+  for (let s = 0; s < 3; s++){
+    const wantWeapon = weaponOpts.length > 0 && Math.random() < MINIMAL_WEAPON_CHANCE;
+    if (wantWeapon)            chosen.push(weaponOpts.pop());
+    else if (statOpts.length)  chosen.push(statOpts.pop());
+    else if (weaponOpts.length) chosen.push(weaponOpts.pop());
+  }
+  if (chosen.length === 0) chosen.push({ kind:'heal' });
+  return chosen;
+}
 function openLevelUp(){
   game.state = STATE.LEVELUP;
-  const opts = buildOptions();
+  const opts = (SETTINGS.upgradeMode === 'minimal') ? buildMinimalOptions() : buildOptions();
   elCards.innerHTML = '';
   for (const o of opts){
     const card = document.createElement('div');
@@ -1723,6 +1780,8 @@ function openLevelUp(){
     if (o.kind==='heal'){ ico='❤️'; nm='Second Wind'; ds='Fully restored. (All boons maxed.)'; lvtxt='FULL'; }
     else if (o.kind==='new-weapon'){ const w=WEAPONS[o.id]; ico=w.ico; nm=w.name; ds=w.desc(0); lvtxt='NEW'; cls='new'; }
     else if (o.kind==='weapon'){ const w=WEAPONS[o.id], lv=player.weapons[o.id]; ico=w.ico; nm=w.name; ds=w.desc(lv); lvtxt='Lv '+(lv+1); }
+    else if (o.kind==='rare-weapon'){ const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; ico=w.ico; nm=w.name; ds=w.desc(lv); lvtxt=lv===0?'RARE':'Lv '+(lv+1); cls='new'; }
+    else if (o.kind==='minimal'){ const u=MINIMAL_UPGRADES[o.id], lv=(player.minimalUpgrades&&player.minimalUpgrades[o.id])||0; ico=u.ico; nm=u.name; ds=u.desc; lvtxt='Lv '+(lv+1); }
     else { const w=PASSIVES[o.id], lv=player.passives[o.id]||0; ico=w.ico; nm=w.name; ds=w.desc; lvtxt='Lv '+(lv+1); }
     card.className = 'card '+cls;
     card.innerHTML = `<div class="ct"><span class="ico">${ico}</span><span class="nm">${nm}</span><span class="lv">${lvtxt}</span></div><div class="ds">${ds}</div>`;
@@ -1736,6 +1795,12 @@ function applyOption(o){
   if (o.kind==='heal'){ P.hp = P.maxhp; }
   else if (o.kind==='new-weapon'){ P.weapons[o.id] = 1; if (o.id==='orbit') rebuildOrbit(); }
   else if (o.kind==='weapon'){ P.weapons[o.id]++; if (o.id==='orbit') rebuildOrbit(); }
+  else if (o.kind==='rare-weapon'){ P.weapons[o.id] = (P.weapons[o.id] || 0) + 1; }
+  else if (o.kind==='minimal'){
+    if (!P.minimalUpgrades) P.minimalUpgrades = {};
+    P.minimalUpgrades[o.id] = (P.minimalUpgrades[o.id] || 0) + 1;
+    MINIMAL_UPGRADES[o.id].apply(P);
+  }
   else { P.passives[o.id] = (P.passives[o.id]||0)+1; PASSIVES[o.id].apply(P); }
   game.state = STATE.PLAY;
   showOnly(null);
@@ -3191,6 +3256,7 @@ D('volley-back').onclick = ()=>{
 // ---------- options menu ----------
 function refreshOptionsUI(){
   D('opt-joystick').classList.toggle('on', !!SETTINGS.joystick);
+  D('opt-upgrademode-label').textContent = SETTINGS.upgradeMode === 'minimal' ? 'Minimal' : 'Classic';
 }
 function openOptions(from){
   optionsReturnTo = from;
@@ -3202,6 +3268,11 @@ D('opt-from-paused').onclick = ()=> openOptions(elPaused);
 D('opt-back').onclick = ()=> showOnly(optionsReturnTo || elTitle);
 D('opt-joystick').onclick = ()=>{
   SETTINGS.joystick = !SETTINGS.joystick;
+  saveSettings();
+  refreshOptionsUI();
+};
+D('opt-upgrademode').onclick = ()=>{
+  SETTINGS.upgradeMode = (SETTINGS.upgradeMode === 'minimal') ? 'classic' : 'minimal';
   saveSettings();
   refreshOptionsUI();
 };
