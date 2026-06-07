@@ -407,23 +407,22 @@ function makeBuilding(type, x, y){
     enemiesSpawned:[],
     slots:[],
   };
-  // 4 turret slots at diagonals around the building
-  const SLOT_DIST = 78;
-  for (let i=0; i<4; i++){
-    const ang = (i/4) * TAU + Math.PI/4;   // NE, SE, SW, NW
-    b.slots.push({
-      kind:'slot',
-      x: x + Math.cos(ang) * SLOT_DIST,
-      y: y + Math.sin(ang) * SLOT_DIST,
-      r: 20,
-      ang,
-      building: b,
-      turret: null,
-    });
-  }
-  // the dojo arrives already fortified — 4 free watchtowers at each corner
+  // Only the Dojo has turret slots — and they arrive pre-armed at all four corners.
+  // Enemy camps are deliberately undefended structures.
   if (type === 'dojo'){
-    for (const s of b.slots) s.turret = { cd:0, lastFireAng: s.ang + Math.PI };
+    const SLOT_DIST = 78;
+    for (let i=0; i<4; i++){
+      const ang = (i/4) * TAU + Math.PI/4;   // NE, SE, SW, NW
+      b.slots.push({
+        kind:'slot',
+        x: x + Math.cos(ang) * SLOT_DIST,
+        y: y + Math.sin(ang) * SLOT_DIST,
+        r: 20,
+        ang,
+        building: b,
+        turret: { cd:0, lastFireAng: ang + Math.PI },
+      });
+    }
   }
   return b;
 }
