@@ -380,18 +380,20 @@ const BUILDING_TYPES = {
 };
 function generateBuildings(){
   const out = [];
-  // dojo always present at a comfortable distance
-  const dojoAng = rand(0, TAU), dojoD = 320;
-  out.push(makeBuilding('dojo', Math.cos(dojoAng)*dojoD, Math.sin(dojoAng)*dojoD));
-  // 3 shop buildings — one of each kind, captured by their bosses
-  for (const type of shuffle(['smithy','vigor','spirit'])){
-    out.push(makeBuilding(type, ...findPlacement(out, 480, 760)));
+  // Dojo at the center of the world — everything else is anchored relative to it
+  out.push(makeBuilding('dojo', 0, 0));
+  // 3 shop buildings — pushed far out at evenly-separated angles
+  const shopTypes = shuffle(['smithy','vigor','spirit']);
+  for (let i=0; i<3; i++){
+    const ang = (i / 3) * TAU + rand(-0.35, 0.35);
+    const d   = rand(2200, 2700);
+    out.push(makeBuilding(shopTypes[i], Math.cos(ang)*d, Math.sin(ang)*d));
   }
-  // 2 or 3 random trap-camps — drop reward orbs when cleared
-  const trapTypes = shuffle(['bandits','shrine','cache']);
-  const n = 2 + (Math.random() < 0.6 ? 1 : 0);
+  // 7±2 random trap-camps scattered across the mid-range
+  const trapTypes = ['bandits','shrine','cache'];
+  const n = 6 + ((Math.random()*4) | 0);   // 6-9
   for (let i=0; i<n; i++){
-    out.push(makeBuilding(trapTypes[i], ...findPlacement(out, 680, 1020)));
+    out.push(makeBuilding(pick(trapTypes), ...findPlacement(out, 500, 1900)));
   }
   return out;
 }
@@ -409,6 +411,64 @@ function findPlacement(existing, minD, maxD){
   // fallback: forced ring at the inner radius
   const ang = rand(0, TAU);
   return [Math.cos(ang)*minD, Math.sin(ang)*minD];
+}
+
+// Static map decoration / collision: lakes (dark blue) and thickets (dark
+// green). Player and enemies are pushed out of their radius; projectiles
+// fly over them. Placed to avoid buildings; minor visual interest + a few
+// detours, no traps or mazes.
+function generateObstacles(buildings){
+  const out = [];
+  const TARGET = 28;
+  for (let i=0; i<TARGET; i++){
+    let placed = null;
+    for (let a=0; a<24 && !placed; a++){
+      const type = pick(['lake', 'thicket', 'thicket']);   // ~2× more thickets than lakes
+      const r = type === 'lake' ? rand(85, 165) : rand(55, 115);
+      const ang = rand(0, TAU), d = rand(220, 2700);
+      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
+      // keep building doors approachable AND don't pile obstacles on each other
+      const nearBuilding = buildings.some(b => Math.hypot(b.x-x, b.y-y) < (200 + r));
+      const nearObstacle = out.some(o => Math.hypot(o.x-x, o.y-y) < (o.r + r + 20));
+      if (!nearBuilding && !nearObstacle) placed = { type, x, y, r };
+    }
+    if (placed) out.push(placed);
+  }
+  return out;
+}
+
+// Rest points. Standing within a campfire's radius slowly heals the player.
+function generateCampfires(buildings, obstacles){
+  const out = [];
+  const TARGET = 9;
+  for (let i=0; i<TARGET; i++){
+    let placed = null;
+    for (let a=0; a<24 && !placed; a++){
+      const ang = rand(0, TAU), d = rand(400, 2100);
+      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
+      const nearBuilding = buildings.some(b => Math.hypot(b.x-x, b.y-y) < 200);
+      const nearObstacle = obstacles.some(o => Math.hypot(o.x-x, o.y-y) < (o.r + 30));
+      const nearOther    = out.some(c => Math.hypot(c.x-x, c.y-y) < 320);
+      if (!nearBuilding && !nearObstacle && !nearOther) placed = { x, y };
+    }
+    if (placed) out.push({ x: placed.x, y: placed.y, r: 60 });
+  }
+  return out;
+}
+
+// Push a movable entity (player or enemy) out of any obstacle it has
+// overlapped. Cheap N×M test (a couple dozen of each at most).
+function pushOutOfObstacles(e){
+  if (!game || !game.obstacles) return;
+  for (const o of game.obstacles){
+    const dx = e.x - o.x, dy = e.y - o.y, d2 = dx*dx + dy*dy;
+    const min = o.r + e.r;
+    if (d2 > 0.0001 && d2 < min*min){
+      const d = Math.sqrt(d2);
+      e.x = o.x + dx/d * min;
+      e.y = o.y + dy/d * min;
+    }
+  }
 }
 function makeBuilding(type, x, y){
   const cfg = BUILDING_TYPES[type];
@@ -702,6 +762,8 @@ function newGame(){
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   game.buildings = generateBuildings();
+  game.obstacles = generateObstacles(game.buildings);
+  game.campfires = generateCampfires(game.buildings, game.obstacles);
   // spawn the samurai right on the Dojo door, between the four pre-armed turrets
   const dojoB = game.buildings.find(b => b.type === 'dojo');
   if (dojoB){ player.x = dojoB.x; player.y = dojoB.y; }
@@ -1269,12 +1331,23 @@ function update(dt){
     P.y = clamp(P.y, -hh, hh);
     game.cam.x = 0; game.cam.y = 0;       // fixed camera
   } else {
+    pushOutOfObstacles(P);                // lakes / thickets shove you out
     game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
     game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
   }
 
   // regen + timers
   if (P.regen) P.hp = Math.min(P.maxhp, P.hp + P.regen*dt);
+  // campfire rest — 8 HP/sec while standing in any campfire's radius
+  if (!game.dojoMode && game.campfires){
+    for (const c of game.campfires){
+      const dx = P.x - c.x, dy = P.y - c.y;
+      if (dx*dx + dy*dy < c.r*c.r){
+        P.hp = Math.min(P.maxhp, P.hp + 8 * dt);
+        break;
+      }
+    }
+  }
   if (P.inv>0) P.inv -= dt;
   if (P.hurt>0) P.hurt -= dt;
 
@@ -1385,6 +1458,8 @@ function update(dt){
         } else { P.hp = 0; transportToDojoAfterDeath(); return; }
       }
     }
+    // shove the enemy out of any lake/thicket it stepped on this frame
+    if (!game.dojoMode && !e.dummy) pushOutOfObstacles(e);
   }
   // light separation so they don't fully stack (skip in dojo — dummies are fixed)
   if (!game.dojoMode){
@@ -1593,12 +1668,9 @@ function update(dt){
     if (e.fromTrap && !e.dead) return true;
     if (e.dead) return false;
     if (e.boss) return true;
-    // marchers persist as long as they're still within range of their target dojo,
-    // even if the player has wandered far away
-    if (e.state === 'march' && e.marchTo){
-      const tdx = e.x - e.marchTo.x, tdy = e.y - e.marchTo.y;
-      if (tdx*tdx + tdy*tdy < cullR2) return true;
-    }
+    // marchers always persist — they originate from far across the map and
+    // need a long walk to reach the dojo; turrets/player eventually finish them
+    if (e.state === 'march') return true;
     const dx = e.x - player.x, dy = e.y - player.y;
     return dx*dx + dy*dy < cullR2;
   });
@@ -1884,6 +1956,9 @@ function draw(){
   if (game.dojoMode) drawDojoRoom();
   else {
     drawGround(camX, camY, VW, VH);
+    // obstacles + campfires draw under buildings (they're ambient terrain)
+    if (game.obstacles) for (const o of game.obstacles) drawObstacle(o);
+    if (game.campfires) for (const c of game.campfires) drawCampfire(c);
     if (game.buildings) for (const b of game.buildings){
       drawBuilding(b);
       for (const slot of b.slots) drawSlot(slot);
@@ -1995,6 +2070,67 @@ function drawStation(s){
   ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
+function drawObstacle(o){
+  ctx.save(); ctx.translate(o.x, o.y);
+  if (o.type === 'lake'){
+    // base water
+    ctx.fillStyle = '#16273e';
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
+    // inner gradient hint of depth
+    const g = ctx.createRadialGradient(0, 0, 4, 0, 0, o.r);
+    g.addColorStop(0, 'rgba(60,90,140,0.45)');
+    g.addColorStop(1, 'rgba(22,39,62,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
+    // a couple of ripples
+    ctx.strokeStyle = 'rgba(150,180,220,0.22)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, o.r*0.55, 0, TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-o.r*0.2, o.r*0.1, o.r*0.28, 0, TAU); ctx.stroke();
+    // shoreline
+    ctx.strokeStyle = 'rgba(80,60,40,0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
+  } else {
+    // thicket — dark green with a few shrub clusters
+    ctx.fillStyle = '#1c3520';
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = 'rgba(10,20,12,0.7)'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
+    ctx.fillStyle = 'rgba(40,80,40,0.6)';
+    const clusters = 4 + ((o.r/40)|0);
+    for (let i=0; i<clusters; i++){
+      const a = (i / clusters) * TAU;
+      const rr = o.r * 0.6;
+      ctx.beginPath(); ctx.arc(Math.cos(a)*rr, Math.sin(a)*rr, o.r*0.22, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(20,40,20,0.55)';
+    ctx.beginPath(); ctx.arc(0, 0, o.r*0.35, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawCampfire(c){
+  ctx.save(); ctx.translate(c.x, c.y);
+  const t = (game ? game.t : 0);
+  // faint heal-radius indicator
+  ctx.strokeStyle = 'rgba(255,138,61,0.18)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(0, 0, c.r, 0, TAU); ctx.stroke();
+  // ring of stones
+  ctx.fillStyle = '#3a3a3a';
+  for (let i=0; i<6; i++){
+    const a = (i/6) * TAU;
+    ctx.beginPath(); ctx.arc(Math.cos(a)*12, Math.sin(a)*12, 4, 0, TAU); ctx.fill();
+  }
+  // flicker fire
+  const flick = 1 + Math.sin(t*9 + c.x*0.01) * 0.18;
+  ctx.shadowColor = '#ff8a3d'; ctx.shadowBlur = 20 * flick;
+  ctx.fillStyle = '#ff8a3d';
+  ctx.beginPath(); ctx.moveTo(0, -18*flick); ctx.lineTo(7, -2); ctx.lineTo(-7, -2); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffd24a';
+  ctx.beginPath(); ctx.moveTo(0, -11*flick); ctx.lineTo(4, -2); ctx.lineTo(-4, -2); ctx.closePath(); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
 function drawBuilding(b){
   ctx.save(); ctx.translate(b.x, b.y);
   const cleared = b.state === 'cleared';
