@@ -312,7 +312,7 @@ function startDojo(){
   D('dojo-interact').classList.add('hidden');
   // game state — peaceful dojo mode. deathPending is derived from the run
   // snapshot so it survives round-trips through soccer/volley/shop overlays.
-  game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 5,
+  game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 50,
            spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
            interactWith: null, lastInteract: 0,
            deathPending: !!(runSnapshot && runSnapshot.deathPending) };
@@ -672,7 +672,7 @@ const MINIMAL_WEAPON_CHANCE = 0.15;   // per-slot odds the card is a rare weapon
 //  SETUP / RESET
 // =====================================================================
 function newGame(){
-  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:5, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
+  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:50, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
            interactWith:null, lastInteract:0, dojoLocked:true };
   // run-mode interact button uses the same DOM element as the dojo's, just no Ryo HUD around it
   D('dojo-interact').classList.add('hidden');
@@ -1725,7 +1725,7 @@ function gainXP(n){
   while (game.xp >= game.xpNext){
     game.xp -= game.xpNext;
     game.level++;
-    game.xpNext = Math.round(5 + game.level*game.level*1.15 + game.level*3);
+    game.xpNext = Math.round(50 + game.level*game.level*11.5 + game.level*30);
     openLevelUp();
   }
 }
