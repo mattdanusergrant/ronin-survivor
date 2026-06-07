@@ -249,7 +249,9 @@
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 let W = 0, H = 0, DPR = 1, viewScale = 1;
-const DESIGN_W = 500;  // target visible world width; smaller screens zoom out
+const DESIGN_W = 700;  // target visible world width; smaller screens zoom out
+const MAX_PROJ_RANGE = 400;   // projectiles die after this many world units from spawn — keeps shots on-screen
+const MAX_PROJ_RANGE2 = MAX_PROJ_RANGE * MAX_PROJ_RANGE;
 const stickBase = { cx:56, cy:0, r:38 };  // fixed visible joystick base (cy set in resize)
 
 function resize(){
@@ -1374,6 +1376,15 @@ function update(dt){
   // projectiles
   for (const s of shots){
     s.life -= dt;
+    // lazy-cache the spawn origin and kill anything that drifts further than
+    // MAX_PROJ_RANGE — keeps every projectile on or near the visible screen,
+    // including homing weapons that would otherwise chase to the horizon.
+    // Stationary shot kinds (lantern, trail) effectively no-op this check.
+    if (s.ox === undefined){ s.ox = s.x; s.oy = s.y; }
+    else {
+      const sdx = s.x - s.ox, sdy = s.y - s.oy;
+      if (sdx*sdx + sdy*sdy > MAX_PROJ_RANGE2) s.life = 0;
+    }
 
     // LANTERN — stationary, ticks damage to enemies in radius
     if (s.kind==='lantern'){
