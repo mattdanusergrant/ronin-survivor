@@ -293,14 +293,14 @@ let optionsReturnTo = null;  // remember which overlay to restore on Back
 // ---------- THE DOJO (walkable hub) ----------
 // Portrait room — phones are tall, so the dojo is too.
 const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
+// Shop stations (Smithy / Vigor / Spirit) were moved out into the world as
+// separate buildings; the Dojo is now purely the hub for Pit, mini-games,
+// and the gate. Repacked the layout to fill the freed vertical space.
 const DOJO_STATIONS = [
-  { id:'smithy', name:'Smithy',         ico:'🗡️', x:-145, y:-300, r:36, kind:'shop', group:'combat' },
-  { id:'vigor',  name:'Hall of Vigor',  ico:'🛡️', x:   0, y:-300, r:36, kind:'shop', group:'defense' },
-  { id:'spirit', name:'Spirit Pool',    ico:'⚡', x: 145, y:-300, r:36, kind:'shop', group:'utility' },
-  { id:'pit',    name:'Resurrection Pit', ico:'☠️', x:-185, y:   0, r:38, kind:'pit' },
-  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-130, y: 290, r:36, kind:'game', action:'soccer' },
-  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 130, y: 290, r:36, kind:'game', action:'volley' },
-  { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 395, r:40, kind:'run' },
+  { id:'pit',    name:'Resurrection Pit', ico:'☠️', x:   0, y:-310, r:42, kind:'pit' },
+  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-140, y: 140, r:38, kind:'game', action:'soccer' },
+  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 140, y: 140, r:38, kind:'game', action:'volley' },
+  { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 340, r:42, kind:'run' },
 ];
 const PIT_COST = 50;
 const DOJO_DUMMIES = [  // four dummies stacked along the right wall
@@ -369,42 +369,53 @@ const BUILDING_TYPES = {
              boss: { name:'Shrine Guardian',  hp:460, speed:36, dmg:24, r:28, xp:48 } },
   cache:   { name:"Ronin's Cache",    ico:'📦', tag:'+15% DMG',color:'#e7b53b', reward:'buff',
              boss: { name:'Cache Sentinel',   hp:400, speed:46, dmg:22, r:25, xp:44 } },
+  // Shop buildings — captured by bosses; freeing the building unlocks the
+  // matching upgrade store and adds four empty turret slots for the player.
+  smithy:  { name:'Smithy',         ico:'🗡️', tag:'Combat shop',  color:'#b58a3a', shopGroup:'combat',
+             boss: { name:'Captured Smith',  hp:380, speed:52, dmg:20, r:26, xp:46 } },
+  vigor:   { name:'Hall of Vigor',  ico:'🛡️', tag:'Defense shop', color:'#5a7a9a', shopGroup:'defense',
+             boss: { name:'The Defiler',     hp:520, speed:34, dmg:26, r:30, xp:50 } },
+  spirit:  { name:'Spirit Pool',    ico:'⚡', tag:'Utility shop', color:'#4fa098', shopGroup:'utility',
+             boss: { name:'The Trickster',   hp:340, speed:62, dmg:18, r:24, xp:42 } },
 };
 function generateBuildings(){
   const out = [];
   // dojo always present at a comfortable distance
   const dojoAng = rand(0, TAU), dojoD = 320;
   out.push(makeBuilding('dojo', Math.cos(dojoAng)*dojoD, Math.sin(dojoAng)*dojoD));
-  // 2 or 3 random traps, spread out wider so they don't crowd the dojo
-  const trapTypes = ['bandits','shrine','cache'];
+  // 3 shop buildings — one of each kind, captured by their bosses
+  for (const type of shuffle(['smithy','vigor','spirit'])){
+    out.push(makeBuilding(type, ...findPlacement(out, 480, 760)));
+  }
+  // 2 or 3 random trap-camps — drop reward orbs when cleared
+  const trapTypes = shuffle(['bandits','shrine','cache']);
   const n = 2 + (Math.random() < 0.6 ? 1 : 0);
-  // shuffle
-  for (let i=trapTypes.length-1; i>0; i--){ const j=(Math.random()*(i+1))|0; [trapTypes[i],trapTypes[j]]=[trapTypes[j],trapTypes[i]]; }
   for (let i=0; i<n; i++){
-    const type = trapTypes[i];
-    let placed = null;
-    for (let a=0; a<40 && !placed; a++){
-      const ang = rand(0, TAU), d = rand(520, 900);
-      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
-      const tooClose = out.some(b => Math.hypot(b.x-x, b.y-y) < 380);
-      if (!tooClose) placed = { x, y };
-    }
-    if (!placed){
-      // fallback: evenly spaced ring far from spawn
-      const ang = (i / n) * TAU + rand(-0.3, 0.3);
-      placed = { x: Math.cos(ang)*700, y: Math.sin(ang)*700 };
-    }
-    out.push(makeBuilding(type, placed.x, placed.y));
+    out.push(makeBuilding(trapTypes[i], ...findPlacement(out, 680, 1020)));
   }
   return out;
+}
+function shuffle(arr){
+  for (let i=arr.length-1; i>0; i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr;
+}
+function findPlacement(existing, minD, maxD){
+  for (let a=0; a<40; a++){
+    const ang = rand(0, TAU), d = rand(minD, maxD);
+    const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
+    const tooClose = existing.some(b => Math.hypot(b.x-x, b.y-y) < 380);
+    if (!tooClose) return [x, y];
+  }
+  // fallback: forced ring at the inner radius
+  const ang = rand(0, TAU);
+  return [Math.cos(ang)*minD, Math.sin(ang)*minD];
 }
 function makeBuilding(type, x, y){
   const cfg = BUILDING_TYPES[type];
   const b = {
     kind:'building', type, x, y, r:46,
     name:cfg.name, ico:cfg.ico, tag:cfg.tag, color:cfg.color,
-    state:'fresh', reward:cfg.reward, enemyCount:cfg.enemyCount,
-    enemiesSpawned:[],
+    state:'fresh', reward:cfg.reward, shopGroup:cfg.shopGroup,
     slots:[],
   };
   // Only the Dojo has turret slots — and they arrive pre-armed at all four corners.
@@ -839,9 +850,26 @@ function checkCampCleared(b){
   if (b.state !== 'active') return;
   if (!b.boss || b.boss.dead || b.boss.hp <= 0){
     b.state = 'cleared';
-    orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:b.reward });
+    if (b.shopGroup){
+      // shop building: free the structure — unlock 4 empty turret slots
+      // and the door becomes interactable to open its shop overlay.
+      addBuildingSlots(b);
+    } else if (b.reward){
+      // camp: drop the reward orb at the door
+      orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:b.reward });
+    }
     for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
       fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,1.0), c:'#e7b53b' }); }
+  }
+}
+function addBuildingSlots(b){
+  const SLOT_DIST = 78;
+  for (let i=0; i<4; i++){
+    const ang = (i/4) * TAU + Math.PI/4;
+    b.slots.push({
+      kind:'slot', x: b.x + Math.cos(ang)*SLOT_DIST, y: b.y + Math.sin(ang)*SLOT_DIST,
+      r: 20, ang, building: b, turret: null,
+    });
   }
 }
 function updateTurrets(dt){
@@ -1609,8 +1637,9 @@ function updateDojoStations(){
     for (const s of DOJO_STATIONS) candidates.push(s);
   } else if (game.buildings){
     for (const b of game.buildings){
-      // only the Dojo is a true interactable; camps spawn their boss on approach
+      // Dojo is interactable (subject to lock); SAVED shop buildings are too
       if (b.type === 'dojo') candidates.push(b);
+      else if (b.shopGroup && b.state === 'cleared') candidates.push(b);
       for (const slot of b.slots) if (!slot.turret) candidates.push(slot);
     }
   }
@@ -1629,7 +1658,8 @@ function updateDojoStations(){
       let label;
       if (near.kind === 'building'){
         if (near.type === 'dojo') label = 'ENTER — ' + near.name;
-        else label = `SPRING TRAP — ${near.name} · ${near.tag}`;
+        else if (near.shopGroup) label = 'ENTER — ' + near.name;
+        else label = 'APPROACH — ' + near.name;   // unreachable in practice
       } else if (near.kind === 'slot'){
         label = META.ryo >= TURRET_COST
           ? `PLACE TURRET · ${TURRET_COST} 🪙`
@@ -1705,7 +1735,8 @@ function dojoActivate(){
   if (s.kind === 'exit') { leaveDojo(); return; }
   if (s.kind === 'building'){
     if (s.type === 'dojo') enterDojoFromRun();
-    // camps no longer require interaction — they spawn their boss on approach
+    else if (s.shopGroup && s.state === 'cleared') openDojoShop(s.shopGroup);
+    // camps & uncleared shops never require interaction — boss spawns on approach
     return;
   }
   if (s.kind === 'slot'){
@@ -1968,10 +1999,12 @@ function drawBuilding(b){
   ctx.save(); ctx.translate(b.x, b.y);
   const cleared = b.state === 'cleared';
   const locked  = b.type === 'dojo' && game && game.dojoLocked;
+  const freed   = cleared && b.shopGroup;     // saved shop: open, gold accent
+  const looted  = cleared && !b.shopGroup;    // cleared camp: dimmed with red X
   const active  = !cleared && !locked && game.interactWith === b;
   const fighting = b.state === 'active' && b.type !== 'dojo';   // boss is alive — red beacon
   const t = (game ? game.t : 0);
-  const dim = cleared || locked;
+  const dim = looted || locked;
   // hut silhouette — wider base + roof pitch
   ctx.beginPath();
   ctx.moveTo(-b.r*1.15,  b.r*0.55);
@@ -2004,13 +2037,18 @@ function drawBuilding(b){
   ctx.fillStyle = dim ? 'rgba(160,140,100,0.5)' : '#fff';
   ctx.fillText(b.ico, 0, -b.r*0.35);
   ctx.shadowBlur = 0;
-  // cleared X / locked padlock
-  if (cleared){
+  // looted X (camps) / freed glow (saved shops) / locked padlock (sealed dojo)
+  if (looted){
     ctx.strokeStyle = 'rgba(216,54,43,0.6)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(-16, -16); ctx.lineTo(16, 16);
     ctx.moveTo(16, -16); ctx.lineTo(-16, 16); ctx.stroke();
+  } else if (freed){
+    // gold halo + open-door brightener — this is a friendly building now
+    ctx.strokeStyle = '#ffd24a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, b.r*1.35, 0, TAU); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,210,90,0.85)';
+    ctx.fillRect(-13, -4, 26, b.r*0.6);    // door re-painted as glowing entryway
   } else if (locked){
-    // padlock symbol over the door
     ctx.font = 'bold 22px -apple-system,sans-serif';
     ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
     ctx.fillStyle = '#cfd3da';
@@ -2025,19 +2063,18 @@ function drawBuilding(b){
     ctx.beginPath(); ctx.arc(0, 0, b.r * (1 + k*0.6), 0, TAU); ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  // label + reward tag below
+  // label + status line below
   ctx.font = 'bold 14px -apple-system,sans-serif';
-  ctx.fillStyle = active ? '#fff' : (dim ? '#7a6a4a' : '#dac8a0');
+  ctx.fillStyle = active ? '#fff' : (dim ? '#7a6a4a' : (freed ? '#ffe79b' : '#dac8a0'));
   ctx.fillText(b.name, 0, b.r + 22);
-  if (!cleared && b.type !== 'dojo'){
-    ctx.font = 'bold 11px -apple-system,sans-serif';
-    ctx.fillStyle = active ? '#ffe79b' : 'rgba(231,181,59,0.85)';
-    ctx.fillText(b.tag, 0, b.r + 38);
-  } else if (locked){
-    ctx.font = 'bold 11px -apple-system,sans-serif';
-    ctx.fillStyle = '#7a6a4a';
-    ctx.fillText('— sealed until you fall —', 0, b.r + 38);
-  }
+  ctx.font = 'bold 11px -apple-system,sans-serif';
+  let sub = '';
+  let subColor = 'rgba(231,181,59,0.85)';
+  if (locked){ sub = '— sealed until you fall —'; subColor = '#7a6a4a'; }
+  else if (freed){ sub = '— freed · enter —'; subColor = '#ffe79b'; }
+  else if (looted){ /* no sub */ }
+  else if (b.type !== 'dojo'){ sub = b.tag; }
+  if (sub){ ctx.fillStyle = subColor; ctx.fillText(sub, 0, b.r + 38); }
   ctx.restore();
 }
 
@@ -3371,6 +3408,9 @@ D('dojo-back').onclick = ()=>{
   if (game && game.dojoMode){
     D('dojo-hud').classList.remove('hidden');
     refreshDojoHud();
+    showOnly(null);
+  } else if (game){
+    // returning to a run after using a freed shop building
     showOnly(null);
   } else {
     showOnly(optionsReturnTo || elTitle);
