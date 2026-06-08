@@ -298,13 +298,11 @@ const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 // separate buildings; the Dojo is now purely the hub for Pit, mini-games,
 // and the gate. Repacked the layout to fill the freed vertical space.
 const DOJO_STATIONS = [
-  { id:'pit',    name:'Resurrection Pit', ico:'☠️', x:   0, y:-310, r:42, kind:'pit' },
   { id:'forge',  name:'Spirit Forge',     ico:'⚒️', x:-180, y:   0, r:38, kind:'forge' },
   { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-140, y: 140, r:38, kind:'game', action:'soccer' },
   { id:'volley', name:'Samurai Volley', ico:'🏐', x: 140, y: 140, r:38, kind:'game', action:'volley' },
   { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 340, r:42, kind:'run' },
 ];
-const PIT_COST = 50;
 const DOJO_DUMMIES = [  // four dummies stacked along the right wall
   { x: 180, y: -130 }, { x: 180, y: -45 }, { x: 180, y: 40 }, { x: 180, y: 125 },
 ];
@@ -314,12 +312,10 @@ function startDojo(){
   elPauseBtn.classList.add('hidden');  // no pause in the dojo
   D('dojo-hud').classList.remove('hidden');
   D('dojo-interact').classList.add('hidden');
-  // game state — peaceful dojo mode. deathPending is derived from the run
-  // snapshot so it survives round-trips through soccer/volley/shop overlays.
+  // game state — peaceful dojo mode
   game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 50,
            spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
-           interactWith: null, lastInteract: 0,
-           deathPending: !!(runSnapshot && runSnapshot.deathPending) };
+           interactWith: null, lastInteract: 0 };
   player = {
     x: 0, y: 0, r: 14, hp: 100, maxhp: 100, speed: 296, baseSpeed: 296,
     power: 1, haste: 1, magnet: 1, xpMult: 1, regen: 0,
@@ -345,15 +341,9 @@ function startDojo(){
 }
 function refreshDojoHud(){
   D('dojo-hud-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`;
-  let hint;
-  if (game && game.deathPending) hint = '☠ Step into the Pit to return';
-  else if (META.pitArmed) hint = '🔥 Pit is armed for your next death';
-  else hint = 'Arm the Pit before you fall';
-  D('dojo-hud-hint').textContent = hint;
+  D('dojo-hud-hint').textContent = 'Walk to a station';
 }
 function leaveDojo(){
-  // if the player walked out with a dying run on hold, that's a commitment
-  if (runSnapshot && runSnapshot.deathPending) commitDeadRun();
   game = null;
   runSnapshot = null;   // chose to leave instead of gate → abandon any paused run
   D('dojo-hud').classList.add('hidden');
@@ -545,45 +535,25 @@ function enterDojoFromRun(){
 // Player died mid-run: keep the run snapshotted (deathPending) and drop the
 // samurai into the dojo. From there they can pay the Pit to revive on the
 // death tile, or commit to game-over by walking to the Road / Leave.
-function transportToDojoAfterDeath(){
+// Death is now a soft reset — teleport the samurai to their current checkpoint
+// (the Dojo by default, or any campfire they've touched), restore full HP, and
+// give a beat of invuln. The run keeps going; the world doesn't reset.
+function respawnAtCheckpoint(){
   if (!game || game.dojoMode) return;
-  if (META.pitArmed){
-    // armed Pit catches you — preserve everything, consume the arm.
-    // Ki is preserved (snapshot holds it) — no drop.
-    snapshotRun();
-    runSnapshot.deathPending = true;
-    META.pitArmed = false;
-    saveMeta();
-  } else {
-    // Pit unarmed: standard death — bank Ryo, drop all accumulated Ki at
-    // the death spot for next run to recover, and end the run for real.
-    awardRunStats(game);
-    if (game.xp && game.xp > 0){
-      META.lostKi = { amount: Math.floor(game.xp), x: player.x, y: player.y };
-      saveMeta();
-    } else {
-      // no ki to lose — wipe any stale drop too
-      if (META.lostKi){ META.lostKi = null; saveMeta(); }
-    }
-  }
-  startDojo();
-  // either way, you respawn standing in the Pit
-  const pit = DOJO_STATIONS.find(s => s.id === 'pit');
-  if (pit && player){ player.x = pit.x; player.y = pit.y; }
-}
-// Player chose to abandon a death-pending run (gate or leave). Award stats on
-// the snapshot's game state, then clear it.
-function commitDeadRun(){
-  if (!runSnapshot || !runSnapshot.deathPending) return;
-  awardRunStats(runSnapshot.game);
-  runSnapshot = null;
+  const cp = game.checkpoint || { x: 0, y: 0 };
+  player.x = cp.x; player.y = cp.y;
+  player.hp = player.maxhp;
+  player.inv = 2.0;
+  shake = Math.max(shake, 14);
+  for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
+    fx.push({ kind:'spark', x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
 }
 
 // ---------- META PROGRESSION (The Dojo) ----------
 // Persistent Ryo currency + permanent upgrades bought between runs.
 const META_KEY = 'ronin-meta-v1';
 const META = (function(){
-  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0, pitArmed:false, lostKi:null };
+  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0 };
   try {
     const m = Object.assign(defaults, JSON.parse(localStorage.getItem(META_KEY) || '{}'));
     m.up = m.up || {};
@@ -758,7 +728,10 @@ const MINIMAL_WEAPON_CHANCE = 0.15;   // per-slot odds the card is a rare weapon
 // =====================================================================
 function newGame(){
   game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:50, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
-           interactWith:null, lastInteract:0, dojoLocked:true };
+           interactWith:null, lastInteract:0,
+           // Dark-Souls-style checkpoint. Defaults to the Dojo's world position;
+           // touching a campfire updates it. Death respawns the samurai here.
+           checkpoint: { x: 0, y: 0, label: 'The Dojo' } };
   // run-mode interact button uses the same DOM element as the dojo's, just no Ryo HUD around it
   D('dojo-interact').classList.add('hidden');
   player = {
@@ -786,11 +759,6 @@ function newGame(){
   // tiny seed crowd around the Dojo — the player should have a moment to
   // orient themselves before the marcher streams start arriving from camps
   for (let i=0;i<3;i++) spawnEnemy(false, rand(550, 850));
-  // lost-ki recovery orb from a prior death (Dark-Souls-style bloodstain)
-  if (META.lostKi){
-    orbs.push({ x: META.lostKi.x, y: META.lostKi.y, xp: META.lostKi.amount,
-                pull: 0, isLostKi: true });
-  }
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1357,12 +1325,16 @@ function update(dt){
 
   // regen + timers
   if (P.regen) P.hp = Math.min(P.maxhp, P.hp + P.regen*dt);
-  // campfire rest — 8 HP/sec while standing in any campfire's radius
+  // campfire rest — 8 HP/sec while standing in any campfire's radius.
+  // Touching a campfire also sets it as the active checkpoint.
   if (!game.dojoMode && game.campfires){
     for (const c of game.campfires){
       const dx = P.x - c.x, dy = P.y - c.y;
       if (dx*dx + dy*dy < c.r*c.r){
         P.hp = Math.min(P.maxhp, P.hp + 8 * dt);
+        if (!game.checkpoint || game.checkpoint.x !== c.x || game.checkpoint.y !== c.y){
+          game.checkpoint = { x: c.x, y: c.y, label: 'Campfire' };
+        }
         break;
       }
     }
@@ -1478,7 +1450,7 @@ function update(dt){
           P.revives--; P.hp = P.maxhp * 0.5; P.inv = 1.6; shake = Math.max(shake, 14);
           for (let i=0;i<24;i++){ const a=rand(0,TAU), sp=rand(120,260);
             fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
-        } else { P.hp = 0; transportToDojoAfterDeath(); return; }
+        } else { respawnAtCheckpoint(); return; }
       }
     }
     // shove the enemy out of any lake/thicket it stepped on this frame
@@ -1677,10 +1649,7 @@ function update(dt){
     if (d < P.r + 6){
       o.got = true;
       if (o.isReward) applyReward(o.reward);
-      else {
-        gainXP(o.xp);
-        if (o.isLostKi){ META.lostKi = null; saveMeta(); }   // bloodstain claimed
-      }
+      else gainXP(o.xp);
     }
   }
   orbs = orbs.filter(o=>!o.got);
@@ -1751,7 +1720,7 @@ function updateDojoStations(){
   }
   for (const s of candidates){
     // world dojo is sealed once you step onto The Road; only death gets you back
-    if (s.kind === 'building' && s.type === 'dojo' && game.dojoLocked) continue;
+    // Dojo is always interactable now — checkpoint respawn replaced the lock
     const dx = s.x-P.x, dy = s.y-P.y;
     const rr = s.r + P.r;
     const d2 = dx*dx + dy*dy;
@@ -1770,16 +1739,6 @@ function updateDojoStations(){
         label = META.ryo >= TURRET_COST
           ? `PLACE TURRET · ${TURRET_COST} 🪙`
           : `NEED ${TURRET_COST} 🪙`;
-      } else if (near.kind === 'pit'){
-        if (game.deathPending){
-          label = 'RESURRECT';
-        } else if (META.pitArmed){
-          label = '🔥 PIT ARMED';
-        } else {
-          label = META.ryo >= PIT_COST
-            ? `ARM PIT · ${PIT_COST} 🪙`
-            : `NEED ${PIT_COST} 🪙 TO ARM`;
-        }
       } else if (near.kind === 'forge' || near.kind === 'campfire'){
         const cost = game.xpNext;
         const prefix = near.kind === 'forge' ? 'FORGE' : 'REST + FORGE';
@@ -1804,30 +1763,6 @@ function dojoActivate(){
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
   if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
   if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
-  if (s.kind === 'pit'){
-    if (game.deathPending){
-      // free resurrect — you paid for this by arming before the run
-      if (runSnapshot) runSnapshot.deathPending = false;
-      if (restoreRun()){
-        player.hp = Math.max(1, Math.floor(player.maxhp * 0.5));
-        player.inv = 1.8; shake = Math.max(shake, 12);
-        for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
-          fx.push({ kind:'spark', x:player.x, y:player.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,.9), c:'#ffe79b' }); }
-      }
-      return;
-    }
-    if (META.pitArmed) return;            // already armed, nothing to do
-    if (META.ryo < PIT_COST){
-      fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED RYO', t:0, life:1.0, vy:-30 });
-      return;
-    }
-    META.ryo -= PIT_COST; META.pitArmed = true; saveMeta();
-    refreshDojoHud();
-    shake = Math.max(shake, 4);
-    for (let i=0;i<14;i++){ const a=rand(0,TAU), sp=rand(60,160);
-      fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#d8362b' }); }
-    return;
-  }
   if (s.kind === 'forge' || s.kind === 'campfire'){
     if (game.xp < game.xpNext){
       fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED KI', t:0, life:1.0, vy:-30 });
@@ -1837,13 +1772,9 @@ function dojoActivate(){
     return;
   }
   if (s.kind === 'run')  {
-    // Paused mid-run dojo visit (no death) → resume run, dojo stays locked.
-    // Dying run → commit death (award Ryo), then start fresh.
+    // Paused mid-run dojo visit → resume the same run.
     // Title → fresh run.
-    if (runSnapshot && runSnapshot.deathPending){
-      commitDeadRun();
-      exitDojoTo(()=>newGame());
-    } else if (runSnapshot){
+    if (runSnapshot){
       restoreRun();
     } else {
       exitDojoTo(()=>newGame());
@@ -2092,33 +2023,28 @@ function drawStation(s){
   ctx.save(); ctx.translate(s.x, s.y);
   const active = game && game.interactWith === s;
   const t = (game ? game.t : 0);
-  // pit lights up red if armed OR a death is pending; dim when neither
-  const pitArmed = s.kind === 'pit' && game && (game.deathPending || META.pitArmed);
-  const pitSilent = s.kind === 'pit' && game && !game.deathPending && !META.pitArmed;
-  const accent = pitArmed ? '#d8362b' : '#e7b53b';
-  const accentRGBA = pitArmed ? 'rgba(216,54,43,0.30)' : 'rgba(231,181,59,0.30)';
   // floor pad
-  ctx.fillStyle = active ? accentRGBA : (pitArmed ? 'rgba(216,54,43,0.20)' : 'rgba(89,69,32,0.40)');
-  ctx.strokeStyle = active ? accent : (pitArmed ? accent : 'rgba(120,90,40,0.85)');
+  ctx.fillStyle = active ? 'rgba(231,181,59,0.30)' : 'rgba(89,69,32,0.40)';
+  ctx.strokeStyle = active ? '#e7b53b' : 'rgba(120,90,40,0.85)';
   ctx.lineWidth = active ? 3 : 2;
   ctx.beginPath(); ctx.arc(0, 0, s.r, 0, TAU); ctx.fill(); ctx.stroke();
-  // pulse: while active, OR if pit is armed (a constant beckoning)
-  if (active || pitArmed){
-    const k = (t * (pitArmed ? 1.5 : 2)) % 1;
-    ctx.globalAlpha = (1 - k) * (active ? 1 : 0.7);
-    ctx.strokeStyle = accent; ctx.lineWidth = 2;
+  // pulse when active
+  if (active){
+    const k = (t*2) % 1;
+    ctx.globalAlpha = 1 - k;
+    ctx.strokeStyle = '#e7b53b'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(0,0, s.r * (1 + k*0.6), 0, TAU); ctx.stroke();
     ctx.globalAlpha = 1;
   }
   // icon
   ctx.font = 'bold 34px -apple-system,sans-serif';
-  ctx.textAlign = 'center'; ctx.fillStyle = pitSilent ? 'rgba(255,255,255,0.45)' : '#fff';
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff';
   ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
   ctx.fillText(s.ico, 0, 12);
   ctx.shadowBlur = 0;
   // label
   ctx.font = 'bold 16px -apple-system,sans-serif';
-  ctx.fillStyle = active ? '#fff' : (pitSilent ? '#7a6a4a' : '#dac8a0');
+  ctx.fillStyle = active ? '#fff' : '#dac8a0';
   ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
@@ -2163,8 +2089,10 @@ function drawObstacle(o){
 function drawCampfire(c){
   ctx.save(); ctx.translate(c.x, c.y);
   const t = (game ? game.t : 0);
-  // faint heal-radius indicator
-  ctx.strokeStyle = 'rgba(255,138,61,0.18)'; ctx.lineWidth = 1;
+  const isCheckpoint = game && game.checkpoint && game.checkpoint.x === c.x && game.checkpoint.y === c.y;
+  // faint heal-radius indicator (brighter if active checkpoint)
+  ctx.strokeStyle = isCheckpoint ? 'rgba(255,200,120,0.45)' : 'rgba(255,138,61,0.18)';
+  ctx.lineWidth = isCheckpoint ? 2 : 1;
   ctx.beginPath(); ctx.arc(0, 0, c.r, 0, TAU); ctx.stroke();
   // ring of stones
   ctx.fillStyle = '#3a3a3a';
@@ -2172,27 +2100,31 @@ function drawCampfire(c){
     const a = (i/6) * TAU;
     ctx.beginPath(); ctx.arc(Math.cos(a)*12, Math.sin(a)*12, 4, 0, TAU); ctx.fill();
   }
-  // flicker fire
+  // flicker fire — taller + brighter when this is the active checkpoint
   const flick = 1 + Math.sin(t*9 + c.x*0.01) * 0.18;
-  ctx.shadowColor = '#ff8a3d'; ctx.shadowBlur = 20 * flick;
+  const scale = isCheckpoint ? 1.4 : 1.0;
+  ctx.shadowColor = '#ff8a3d'; ctx.shadowBlur = (isCheckpoint ? 32 : 20) * flick;
   ctx.fillStyle = '#ff8a3d';
-  ctx.beginPath(); ctx.moveTo(0, -18*flick); ctx.lineTo(7, -2); ctx.lineTo(-7, -2); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -18*flick*scale); ctx.lineTo(7*scale, -2); ctx.lineTo(-7*scale, -2); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#ffd24a';
-  ctx.beginPath(); ctx.moveTo(0, -11*flick); ctx.lineTo(4, -2); ctx.lineTo(-4, -2); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -11*flick*scale); ctx.lineTo(4*scale, -2); ctx.lineTo(-4*scale, -2); ctx.closePath(); ctx.fill();
   ctx.shadowBlur = 0;
+  if (isCheckpoint){
+    ctx.fillStyle = '#ffe79b'; ctx.font = 'bold 10px -apple-system,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('★ checkpoint', 0, c.r + 14);
+  }
   ctx.restore();
 }
 
 function drawBuilding(b){
   ctx.save(); ctx.translate(b.x, b.y);
   const cleared = b.state === 'cleared';
-  const locked  = b.type === 'dojo' && game && game.dojoLocked;
   const freed   = cleared && b.shopGroup;     // saved shop: open, gold accent
   const looted  = cleared && !b.shopGroup;    // cleared camp: dimmed with red X
-  const active  = !cleared && !locked && game.interactWith === b;
+  const active  = !cleared && game.interactWith === b;
   const fighting = b.state === 'active' && b.type !== 'dojo';   // boss is alive — red beacon
   const t = (game ? game.t : 0);
-  const dim = looted || locked;
+  const dim = looted;
   // hut silhouette — wider base + roof pitch
   ctx.beginPath();
   ctx.moveTo(-b.r*1.15,  b.r*0.55);
@@ -2225,7 +2157,7 @@ function drawBuilding(b){
   ctx.fillStyle = dim ? 'rgba(160,140,100,0.5)' : '#fff';
   ctx.fillText(b.ico, 0, -b.r*0.35);
   ctx.shadowBlur = 0;
-  // looted X (camps) / freed glow (saved shops) / locked padlock (sealed dojo)
+  // looted X (camps) / freed glow (saved shops)
   if (looted){
     ctx.strokeStyle = 'rgba(216,54,43,0.6)'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(-16, -16); ctx.lineTo(16, 16);
@@ -2236,12 +2168,6 @@ function drawBuilding(b){
     ctx.beginPath(); ctx.arc(0, 0, b.r*1.35, 0, TAU); ctx.stroke();
     ctx.fillStyle = 'rgba(255,210,90,0.85)';
     ctx.fillRect(-13, -4, 26, b.r*0.6);    // door re-painted as glowing entryway
-  } else if (locked){
-    ctx.font = 'bold 22px -apple-system,sans-serif';
-    ctx.shadowColor = '#000'; ctx.shadowBlur = 4;
-    ctx.fillStyle = '#cfd3da';
-    ctx.fillText('🔒', 0, b.r*0.32);
-    ctx.shadowBlur = 0;
   }
   // active pulse
   if (active){
@@ -2258,8 +2184,7 @@ function drawBuilding(b){
   ctx.font = 'bold 11px -apple-system,sans-serif';
   let sub = '';
   let subColor = 'rgba(231,181,59,0.85)';
-  if (locked){ sub = '— sealed until you fall —'; subColor = '#7a6a4a'; }
-  else if (freed){ sub = '— freed · enter —'; subColor = '#ffe79b'; }
+  if (freed){ sub = '— freed · enter —'; subColor = '#ffe79b'; }
   else if (looted){ /* no sub */ }
   else if (b.type !== 'dojo'){ sub = b.tag; }
   if (sub){ ctx.fillStyle = subColor; ctx.fillText(sub, 0, b.r + 38); }
@@ -2364,17 +2289,6 @@ function drawOrb(o){
     ctx.fillStyle = '#8b1f1a';
     ctx.fillRect(-2, -10, 4, 20);
     ctx.fillRect(-10, -2, 20, 4);
-  } else if (o.isLostKi){
-    // dropped ki from a prior death — purple bloodstain glow, much bigger
-    ctx.shadowColor = '#b388ff'; ctx.shadowBlur = 28*pulse;
-    ctx.fillStyle = 'rgba(180,130,255,0.85)';
-    ctx.beginPath(); ctx.arc(0, 0, 14*pulse, 0, TAU); ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(0, 0, 4, 0, TAU); ctx.fill();
-    // floating ki count
-    ctx.fillStyle = '#dac8ff'; ctx.font = 'bold 11px -apple-system,sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(o.xp + ' ki', 0, -22);
   } else {
     ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=8;
     ctx.fillStyle = o.xp>1 ? '#7ce8ef' : '#4fd6e0';
@@ -3637,7 +3551,6 @@ addEventListener('keydown', e=>{
 function resetAllProgress(){
   META.ryo = 0; META.up = {}; META.runs = 0; META.bestTime = 0;
   META.bestLevel = 0; META.totalKills = 0; META.totalRyo = 0;
-  META.pitArmed = false; META.lostKi = null;
   saveMeta();
   refreshTitleRyo();
 }
