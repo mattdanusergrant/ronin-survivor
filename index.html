@@ -190,6 +190,7 @@
     </div>
     <div class="btn btn-sec" id="opt-soccer" style="margin-top:8px">⚽ Samurai Soccer</div>
     <div class="btn btn-sec" id="opt-volley">🏐 Samurai Volleyball</div>
+    <div class="btn btn-sec" id="opt-newgame" style="border-color:#5a2420; color:#d8362b; margin-top:8px">⚠ New Game (wipe progress)</div>
     <div class="btn" id="opt-back">Back</div>
   </div>
 
@@ -3481,6 +3482,17 @@ D('opt-upgrademode').onclick = ()=>{
   saveSettings();
   refreshOptionsUI();
 };
+D('opt-newgame').onclick = ()=>{
+  if (!confirm('Start a NEW GAME?\n\nThis wipes all Ryo, upgrades, lifetime stats, and pit-arming, AND abandons any current run. Your settings (joystick, upgrade style) are kept.\n\nThis cannot be undone.')) return;
+  resetAllProgress();
+  // abandon any active state so the player lands on a true fresh title
+  game = null; soccer = null; volley = null; runSnapshot = null;
+  elHud.classList.add('hidden');
+  elPauseBtn.classList.add('hidden');
+  D('dojo-hud').classList.add('hidden');
+  D('dojo-interact').classList.add('hidden');
+  showOnly(elTitle);
+};
 
 // ---------- The Dojo (shop overlay) ----------
 // Stations in the walkable dojo open this filtered to their category.
@@ -3563,11 +3575,20 @@ D('dojo-interact').onclick = ()=> dojoActivate();
 addEventListener('keydown', e=>{
   if (game && game.dojoMode && (e.key==='Enter' || e.key===' ' || e.key.toLowerCase()==='e')) dojoActivate();
 });
-D('dojo-reset').onclick = ()=>{
-  if (!confirm('Reset ALL Dojo progress and Ryo? This cannot be undone.')) return;
+// Wipes all META progression (Ryo, upgrades, lifetime stats, armed Pit).
+// SETTINGS (joystick / upgradeMode) are intentionally preserved as
+// presentation preferences, not progress.
+function resetAllProgress(){
   META.ryo = 0; META.up = {}; META.runs = 0; META.bestTime = 0;
   META.bestLevel = 0; META.totalKills = 0; META.totalRyo = 0;
-  saveMeta(); renderDojo();
+  META.pitArmed = false;
+  saveMeta();
+  refreshTitleRyo();
+}
+D('dojo-reset').onclick = ()=>{
+  if (!confirm('Reset ALL Dojo progress and Ryo? This cannot be undone.')) return;
+  resetAllProgress();
+  renderDojo();
 };
 refreshTitleRyo();
 </script>
