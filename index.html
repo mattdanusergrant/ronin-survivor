@@ -26,10 +26,12 @@
   .bar{height:12px; background:#0a0a0d; border:1px solid var(--line); border-radius:7px; overflow:hidden;}
   .bar > i{display:block; height:100%; width:0%; transition:width .12s linear;}
   #hpfill{background:linear-gradient(90deg,#9e1f17,#d8362b);}
-  #xpfill{background:linear-gradient(90deg,#2a8f97,#4fd6e0);}
   .hprow{display:flex; align-items:center; gap:8px;}
   .hprow .bar{flex:1;}
   #hptxt{font-size:11px; color:var(--dim); min-width:54px; text-align:right;}
+  #kitxt{font-size:13px; color:var(--ki); letter-spacing:.5px; text-align:right;}
+  #kitxt b{color:var(--bone); font-weight:700;}
+  #kitxt span{color:var(--dim); font-size:11px; margin-left:6px;}
   #toprow{display:flex; justify-content:space-between; align-items:baseline; font-size:13px;}
   #timer{font-size:22px; font-weight:700; letter-spacing:1px; color:var(--bone);}
   #lvl{color:var(--gold); font-weight:700;}
@@ -54,6 +56,22 @@
   .btn-sec:active{background:#1d1d24;}
   .help{font-size:12px; color:var(--dim); max-width:420px; line-height:1.6;}
   .help b{color:var(--ink);}
+
+  /* campfire menu */
+  #campfire{padding:14px 16px 18px;}
+  #campfire .tag{color:var(--gold);}
+  #cf-stats{display:grid; grid-template-columns:1fr 1fr; gap:6px 18px; width:100%; max-width:380px;
+    font-size:12px; color:var(--dim); background:var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding:10px 14px; margin:4px 0 6px;}
+  #cf-stats .row{display:flex; justify-content:space-between;}
+  #cf-stats b{color:var(--bone); font-weight:700;}
+  #cf-ki{font-size:18px; color:var(--ki); margin:2px 0;}
+  #cf-ki b{color:var(--bone); font-weight:700;}
+  #cf-help{font-size:11px; color:var(--dim); margin:2px 0 4px;}
+  .card.disabled{opacity:.45; cursor:default;}
+  .card .cost{margin-left:auto; font-size:11px; color:var(--ki); border:1px solid #1f4f54;
+    padding:1px 7px; border-radius:20px; background:#0a1c1e;}
+  .card.disabled .cost{color:var(--dim); border-color:#33333a; background:#16161c;}
 
   /* level-up cards */
   #cards{display:flex; flex-direction:column; gap:10px; width:100%; max-width:380px;}
@@ -138,7 +156,7 @@
   <div id="hud" class="hidden">
     <div id="toprow"><span id="lvl">Lv 1</span><span id="timer">00:00</span><span id="kills">0 felled</span></div>
     <div class="hprow"><div class="bar"><i id="hpfill"></i></div><span id="hptxt">100 / 100</span></div>
-    <div class="bar"><i id="xpfill"></i></div>
+    <div id="kitxt">🌀 <b>0</b> Ki<span>· next upgrade 50</span></div>
   </div>
   <div id="pausebtn" class="hidden">II</div>
 
@@ -170,6 +188,17 @@
     <div class="tag">Level Up</div>
     <h1 style="font-size:24px">CHOOSE A BOON</h1>
     <div id="cards"></div>
+  </div>
+
+  <!-- Campfire menu — pauses the run, lets you spend Ki + view stats -->
+  <div id="campfire" class="overlay hidden">
+    <div class="tag">🔥 Campfire</div>
+    <h1 style="font-size:22px">REST &amp; SHARPEN</h1>
+    <div id="cf-ki">🌀 <b>0</b> Ki</div>
+    <div id="cf-stats"></div>
+    <div id="cf-help">Spend Ki to sharpen your blade. Each upgrade costs more than the last.</div>
+    <div id="cf-cards"></div>
+    <div class="btn" id="cf-leave" style="margin-top:8px">Leave Campfire</div>
   </div>
 
   <!-- Pause -->
@@ -280,6 +309,7 @@ const elHud = D('hud'), elPauseBtn = D('pausebtn');
 const elTitle = D('title'), elLevelup = D('levelup'), elPaused = D('paused'), elOver = D('over');
 const elOptions = D('options'), elSoccerOver = D('soccer-over'), elVolleyOver = D('volley-over');
 const elDojo = D('dojo');
+const elCampfire = D('campfire');
 
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
@@ -1326,17 +1356,26 @@ function update(dt){
   // regen + timers
   if (P.regen) P.hp = Math.min(P.maxhp, P.hp + P.regen*dt);
   // campfire rest — 8 HP/sec while standing in any campfire's radius.
-  // Touching a campfire also sets it as the active checkpoint.
+  // First touch sets it as the active checkpoint AND opens the campfire menu
+  // (which pauses the game). The flag prevents re-opening every frame; it
+  // clears when the player walks out of the radius.
   if (!game.dojoMode && game.campfires){
+    let touched = null;
     for (const c of game.campfires){
       const dx = P.x - c.x, dy = P.y - c.y;
-      if (dx*dx + dy*dy < c.r*c.r){
-        P.hp = Math.min(P.maxhp, P.hp + 8 * dt);
-        if (!game.checkpoint || game.checkpoint.x !== c.x || game.checkpoint.y !== c.y){
-          game.checkpoint = { x: c.x, y: c.y, label: 'Campfire' };
-        }
-        break;
+      if (dx*dx + dy*dy < c.r*c.r){ touched = c; break; }
+    }
+    if (touched){
+      P.hp = Math.min(P.maxhp, P.hp + 8 * dt);
+      if (!game.checkpoint || game.checkpoint.x !== touched.x || game.checkpoint.y !== touched.y){
+        game.checkpoint = { x: touched.x, y: touched.y, label: 'Campfire' };
       }
+      if (game.atCampfire !== touched){
+        game.atCampfire = touched;
+        openCampfireMenu();
+      }
+    } else if (game.atCampfire){
+      game.atCampfire = null;
     }
   }
   if (P.inv>0) P.inv -= dt;
@@ -1763,7 +1802,11 @@ function dojoActivate(){
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
   if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
   if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
-  if (s.kind === 'forge' || s.kind === 'campfire'){
+  if (s.kind === 'campfire'){
+    openCampfireMenu();
+    return;
+  }
+  if (s.kind === 'forge'){
     if (game.xp < game.xpNext){
       fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED KI', t:0, life:1.0, vy:-30 });
       return;
@@ -1894,7 +1937,7 @@ function openLevelUp(){
   }
   showOnly(elLevelup);
 }
-function applyOption(o){
+function applyUpgrade(o){
   const P = player;
   if (o.kind==='heal'){ P.hp = P.maxhp; }
   else if (o.kind==='new-weapon'){ P.weapons[o.id] = 1; if (o.id==='orbit') rebuildOrbit(); }
@@ -1906,8 +1949,76 @@ function applyOption(o){
     MINIMAL_UPGRADES[o.id].apply(P);
   }
   else { P.passives[o.id] = (P.passives[o.id]||0)+1; PASSIVES[o.id].apply(P); }
+}
+function applyOption(o){
+  applyUpgrade(o);
   game.state = STATE.PLAY;
   showOnly(null);
+}
+
+// =====================================================================
+//  CAMPFIRE MENU — pauses the run, spend Ki + view stats
+// =====================================================================
+function openCampfireMenu(){
+  if (!game || game.dojoMode) return;
+  game.state = STATE.PAUSED;
+  player.hp = player.maxhp;          // a rest fully restores
+  refreshCampfireMenu();
+  showOnly(elCampfire);
+}
+function closeCampfireMenu(){
+  if (!game) return;
+  game.state = STATE.PLAY;
+  showOnly(null);
+}
+function cardLabel(o){
+  if (o.kind==='heal')        return { ico:'❤️', nm:'Second Wind', ds:'Fully restored. (All boons maxed.)', lv:'FULL', cls:'' };
+  if (o.kind==='new-weapon')  { const w=WEAPONS[o.id]; return { ico:w.ico, nm:w.name, ds:w.desc(0), lv:'NEW', cls:'new' }; }
+  if (o.kind==='weapon')      { const w=WEAPONS[o.id], lv=player.weapons[o.id]; return { ico:w.ico, nm:w.name, ds:w.desc(lv), lv:'Lv '+(lv+1), cls:'' }; }
+  if (o.kind==='rare-weapon') { const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; return { ico:w.ico, nm:w.name, ds:w.desc(lv), lv:lv===0?'RARE':'Lv '+(lv+1), cls:'new' }; }
+  if (o.kind==='minimal')     { const u=MINIMAL_UPGRADES[o.id], lv=(player.minimalUpgrades&&player.minimalUpgrades[o.id])||0; return { ico:u.ico, nm:u.name, ds:u.desc, lv:'Lv '+(lv+1), cls:'' }; }
+  const w=PASSIVES[o.id], lv=player.passives[o.id]||0;
+  return { ico:w.ico, nm:w.name, ds:w.desc, lv:'Lv '+(lv+1), cls:'' };
+}
+function refreshCampfireMenu(){
+  const P = player, cost = game.xpNext, ki = Math.floor(game.xp);
+  const afford = ki >= cost;
+  D('cf-ki').innerHTML = `🌀 <b>${ki}</b> Ki  ·  next upgrade <b>${cost}</b>`;
+  const lines = [
+    ['Level',      'Lv ' + game.level],
+    ['HP',         Math.ceil(P.hp) + ' / ' + P.maxhp],
+    ['Move speed', P.speed.toFixed(0)],
+    ['Power',      '×' + P.power.toFixed(2)],
+    ['Regen',      (P.regen||0).toFixed(1) + '/s'],
+    ['Magnet',     '×' + (P.magnet||1).toFixed(2)],
+    ['Armor',      Math.round((P.armor||0)*100) + '%'],
+    ['Ryo mult',   '×' + (P.ryoMult||1).toFixed(2)],
+  ];
+  D('cf-stats').innerHTML = lines.map(([k,v])=>`<div class="row"><span>${k}</span><b>${v}</b></div>`).join('');
+  const opts = (SETTINGS.upgradeMode === 'minimal') ? buildMinimalOptions() : buildOptions();
+  const wrap = D('cf-cards'); wrap.innerHTML = '';
+  for (const o of opts){
+    const L = cardLabel(o);
+    const card = document.createElement('div');
+    card.className = 'card ' + L.cls + (afford ? '' : ' disabled');
+    card.innerHTML =
+      `<div class="ct"><span class="ico">${L.ico}</span><span class="nm">${L.nm}</span>`+
+      `<span class="lv">${L.lv}</span><span class="cost">${cost} Ki</span></div>`+
+      `<div class="ds">${L.ds}</div>`;
+    if (afford) card.onclick = ()=> buyCampfireUpgrade(o);
+    wrap.appendChild(card);
+  }
+  D('cf-help').textContent = afford
+    ? 'Spend Ki to sharpen your blade. Each upgrade costs more than the last.'
+    : `Not enough Ki yet — gather ${cost - ki} more, then return.`;
+}
+function buyCampfireUpgrade(o){
+  if (game.xp < game.xpNext) return;
+  game.xp -= game.xpNext;
+  game.level++;
+  game.xpNext = Math.round(50 + game.level*game.level*11.5 + game.level*30);
+  applyUpgrade(o);
+  refreshCampfireMenu();
 }
 
 // =====================================================================
@@ -2622,14 +2733,16 @@ function updateHud(){
   D('timer').textContent = String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
   D('hpfill').style.width = clamp(player.hp/player.maxhp*100,0,100)+'%';
   D('hptxt').textContent = Math.ceil(player.hp)+' / '+player.maxhp;
-  D('xpfill').style.width = clamp(game.xp/game.xpNext*100,0,100)+'%';
+  const ready = game.xp >= game.xpNext;
+  D('kitxt').innerHTML = `🌀 <b>${Math.floor(game.xp)}</b> Ki` +
+    `<span>${ready ? '· upgrade ready at a campfire' : '· next upgrade ' + game.xpNext}</span>`;
 }
 
 // =====================================================================
 //  FLOW
 // =====================================================================
 function showOnly(el){
-  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver, elDojo]) o.classList.add('hidden');
+  for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver, elDojo, elCampfire]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
   if (el === elTitle) refreshTitleRyo();
 }
@@ -3412,6 +3525,7 @@ requestAnimationFrame(loop);
 D('startbtn').onclick = ()=>{ startDojo(); };
 D('againbtn').onclick = ()=>{ newGame(); };
 D('resumebtn').onclick = togglePause;
+D('cf-leave').onclick = closeCampfireMenu;
 D('quitbtn').onclick = ()=>{ game=null; soccer=null; volley=null; elHud.classList.add('hidden'); elPauseBtn.classList.add('hidden'); showOnly(elTitle); };
 elPauseBtn.onclick = togglePause;
 
