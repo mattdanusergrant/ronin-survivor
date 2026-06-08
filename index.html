@@ -1084,7 +1084,7 @@ function fireWeapons(dt){
   if (P.weapons.shuriken){
     cd.shuriken -= dt;
     const s = shurStats(P.weapons.shuriken);
-    if (cd.shuriken <= 0){
+    if (cd.shuriken <= 0 && anyEnemyWithin(MAX_PROJ_RANGE)){
       cd.shuriken = s.cd/1000 * hz;
       const tgts = nearest(s.count);
       for (const e of tgts){
@@ -1098,7 +1098,7 @@ function fireWeapons(dt){
   if (P.weapons.kiwave){
     cd.kiwave -= dt;
     const s = kiStats(P.weapons.kiwave);
-    if (cd.kiwave <= 0){
+    if (cd.kiwave <= 0 && anyEnemyWithin(s.range)){
       cd.kiwave = s.cd/1000 * hz;
       shots.push({ kind:'ki', x:P.x, y:P.y, vx:Math.cos(lastAng)*s.speed, vy:Math.sin(lastAng)*s.speed,
         dmg:s.dmg*P.power, r:s.w, life:s.range/s.speed, pierce:999, hit:new Set(), ang:lastAng });
@@ -1125,7 +1125,7 @@ function fireWeapons(dt){
   if (P.weapons.petal){
     cd.petal -= dt;
     const s = petalStats(P.weapons.petal);
-    if (cd.petal <= 0){
+    if (cd.petal <= 0 && anyEnemyWithin(s.range)){
       cd.petal = s.cd/1000 * hz;
       for (let i=0;i<s.count;i++){
         const a = i/s.count*TAU + rand(-0.08,0.08);
@@ -1138,7 +1138,7 @@ function fireWeapons(dt){
   if (P.weapons.lantern){
     cd.lantern -= dt;
     const s = lanternStats(P.weapons.lantern);
-    if (cd.lantern <= 0){
+    if (cd.lantern <= 0 && anyEnemyWithin(s.r + 60)){
       cd.lantern = s.cd/1000 * hz;
       shots.push({ kind:'lantern', x:P.x, y:P.y, vx:0, vy:0,
         dmg:s.dmg*P.power, r:s.r, life:s.life, tickT:0 });
@@ -1148,7 +1148,7 @@ function fireWeapons(dt){
   if (P.weapons.iron){
     cd.iron -= dt;
     const s = ironStats(P.weapons.iron);
-    if (cd.iron <= 0){
+    if (cd.iron <= 0 && anyEnemyWithin(s.r + 20)){
       cd.iron = s.cd/1000 * hz;
       const d2 = s.r * s.r;
       for (const e of enemies){
@@ -1162,7 +1162,7 @@ function fireWeapons(dt){
   if (P.weapons.trail){
     cd.trail -= dt;
     const s = trailStats(P.weapons.trail);
-    if (cd.trail <= 0){
+    if (cd.trail <= 0 && anyEnemyWithin(s.r + 60)){
       cd.trail = s.cd/1000 * hz;
       shots.push({ kind:'trail', x:P.x, y:P.y, vx:0, vy:0,
         dmg:s.dmg*P.power, r:s.r, life:s.life, hit:new Set() });
@@ -1173,7 +1173,7 @@ function fireWeapons(dt){
     cd.kunai -= dt;
     const s = kunaiStats(P.weapons.kunai);
     if (cd.kunai <= 0){
-      const t = nearest(1)[0];
+      const t = nearestEnemyWithin(MAX_PROJ_RANGE);
       if (t){
         cd.kunai = s.cd/1000 * hz;
         const a = Math.atan2(t.y-P.y, t.x-P.x);
@@ -1187,7 +1187,7 @@ function fireWeapons(dt){
     cd.thunder -= dt;
     const s = thunderStats(P.weapons.thunder);
     if (cd.thunder <= 0){
-      const first = nearest(1)[0];
+      const first = nearestEnemyWithin(MAX_PROJ_RANGE);
       if (first){
         cd.thunder = s.cd/1000 * hz;
         const seen = new Set([first._id]);
@@ -1216,7 +1216,7 @@ function fireWeapons(dt){
   if (P.weapons.bloom){
     cd.bloom -= dt;
     const s = bloomStats(P.weapons.bloom);
-    if (cd.bloom <= 0){
+    if (cd.bloom <= 0 && anyEnemyWithin(s.r + 20)){
       cd.bloom = s.cd/1000 * hz;
       for (const e of enemies){
         if (e.dead) continue;
@@ -1231,7 +1231,7 @@ function fireWeapons(dt){
     cd.wraith -= dt;
     const s = wraithStats(P.weapons.wraith);
     if (cd.wraith <= 0){
-      const t = nearest(1)[0];
+      const t = nearestEnemyWithin(MAX_PROJ_RANGE);
       if (t){
         cd.wraith = s.cd/1000 * hz;
         const a = Math.atan2(t.y-P.y, t.x-P.x);
@@ -1282,7 +1282,7 @@ function fireWeapons(dt){
     cd.spear -= dt;
     const s = spearStats(P.weapons.spear);
     if (cd.spear <= 0){
-      const t = nearest(1)[0];
+      const t = nearestEnemyWithin(Math.min(s.range, MAX_PROJ_RANGE));
       if (t){
         cd.spear = s.cd/1000 * hz;
         const a = Math.atan2(t.y-P.y, t.x-P.x);
@@ -1296,7 +1296,7 @@ function fireWeapons(dt){
     cd.rico -= dt;
     const s = ricoStats(P.weapons.rico);
     if (cd.rico <= 0){
-      const t = nearest(1)[0];
+      const t = nearestEnemyWithin(MAX_PROJ_RANGE);
       if (t){
         cd.rico = s.cd/1000 * hz;
         const a = Math.atan2(t.y-P.y, t.x-P.x);
@@ -1310,7 +1310,7 @@ function fireWeapons(dt){
     cd.arrow -= dt;
     const s = arrowStats(P.weapons.arrow);
     if (cd.arrow <= 0){
-      const t = nearest(1)[0];
+      const t = nearestEnemyWithin(MAX_PROJ_RANGE);
       if (t){
         cd.arrow = s.cd/1000 * hz;
         const a = Math.atan2(t.y-P.y, t.x-P.x);
@@ -1325,6 +1325,27 @@ function nearest(n){
   const P = player;
   return enemies.slice().sort((a,b)=>
     (Math.hypot(a.x-P.x,a.y-P.y)) - (Math.hypot(b.x-P.x,b.y-P.y))).slice(0,n);
+}
+// Range-gate helpers. Every weapon refuses to fire when nothing's in reach —
+// the same "no foes in range, no swing" rule that already governs the katana.
+function anyEnemyWithin(r){
+  const P = player, r2 = r * r;
+  for (const e of enemies){
+    if (e.dead) continue;
+    const dx = e.x - P.x, dy = e.y - P.y;
+    if (dx*dx + dy*dy < r2) return true;
+  }
+  return false;
+}
+function nearestEnemyWithin(r){
+  const P = player;
+  let best = null, bestD = Infinity;
+  for (const e of enemies){
+    if (e.dead) continue;
+    const d = Math.hypot(e.x - P.x, e.y - P.y);
+    if (d < r + e.r && d < bestD){ bestD = d; best = e; }
+  }
+  return best;
 }
 
 // =====================================================================
