@@ -299,6 +299,7 @@ const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 // and the gate. Repacked the layout to fill the freed vertical space.
 const DOJO_STATIONS = [
   { id:'pit',    name:'Resurrection Pit', ico:'☠️', x:   0, y:-310, r:42, kind:'pit' },
+  { id:'forge',  name:'Spirit Forge',     ico:'⚒️', x:-180, y:   0, r:38, kind:'forge' },
   { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-140, y: 140, r:38, kind:'game', action:'soccer' },
   { id:'volley', name:'Samurai Volley', ico:'🏐', x: 140, y: 140, r:38, kind:'game', action:'volley' },
   { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 340, r:42, kind:'run' },
@@ -547,14 +548,23 @@ function enterDojoFromRun(){
 function transportToDojoAfterDeath(){
   if (!game || game.dojoMode) return;
   if (META.pitArmed){
-    // armed Pit catches you — preserve everything, consume the arm
+    // armed Pit catches you — preserve everything, consume the arm.
+    // Ki is preserved (snapshot holds it) — no drop.
     snapshotRun();
     runSnapshot.deathPending = true;
     META.pitArmed = false;
     saveMeta();
   } else {
-    // Pit unarmed: standard death — bank Ryo now, the run is over for real
+    // Pit unarmed: standard death — bank Ryo, drop all accumulated Ki at
+    // the death spot for next run to recover, and end the run for real.
     awardRunStats(game);
+    if (game.xp && game.xp > 0){
+      META.lostKi = { amount: Math.floor(game.xp), x: player.x, y: player.y };
+      saveMeta();
+    } else {
+      // no ki to lose — wipe any stale drop too
+      if (META.lostKi){ META.lostKi = null; saveMeta(); }
+    }
   }
   startDojo();
   // either way, you respawn standing in the Pit
@@ -573,7 +583,7 @@ function commitDeadRun(){
 // Persistent Ryo currency + permanent upgrades bought between runs.
 const META_KEY = 'ronin-meta-v1';
 const META = (function(){
-  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0, pitArmed:false };
+  const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0, pitArmed:false, lostKi:null };
   try {
     const m = Object.assign(defaults, JSON.parse(localStorage.getItem(META_KEY) || '{}'));
     m.up = m.up || {};
@@ -776,6 +786,11 @@ function newGame(){
   // tiny seed crowd around the Dojo — the player should have a moment to
   // orient themselves before the marcher streams start arriving from camps
   for (let i=0;i<3;i++) spawnEnemy(false, rand(550, 850));
+  // lost-ki recovery orb from a prior death (Dark-Souls-style bloodstain)
+  if (META.lostKi){
+    orbs.push({ x: META.lostKi.x, y: META.lostKi.y, xp: META.lostKi.amount,
+                pull: 0, isLostKi: true });
+  }
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1659,7 +1674,14 @@ function update(dt){
     const dx=P.x-o.x, dy=P.y-o.y, d=Math.hypot(dx,dy);
     if (d < mr || o.pull) o.pull = 1;
     if (o.pull){ const sp = 260; o.x += dx/(d||1)*sp*dt; o.y += dy/(d||1)*sp*dt; }
-    if (d < P.r + 6){ o.got=true; if (o.isReward) applyReward(o.reward); else gainXP(o.xp); }
+    if (d < P.r + 6){
+      o.got = true;
+      if (o.isReward) applyReward(o.reward);
+      else {
+        gainXP(o.xp);
+        if (o.isLostKi){ META.lostKi = null; saveMeta(); }   // bloodstain claimed
+      }
+    }
   }
   orbs = orbs.filter(o=>!o.got);
   // trap-clear check (runs cheaply since active traps are few)
@@ -1721,6 +1743,11 @@ function updateDojoStations(){
       else if (b.shopGroup && b.state === 'cleared') candidates.push(b);
       for (const slot of b.slots) if (!slot.turret) candidates.push(slot);
     }
+    // campfires — rest + spend Ki for upgrades
+    if (game.campfires) for (const c of game.campfires){
+      if (!c.kind) c.kind = 'campfire';
+      candidates.push(c);
+    }
   }
   for (const s of candidates){
     // world dojo is sealed once you step onto The Road; only death gets you back
@@ -1753,6 +1780,10 @@ function updateDojoStations(){
             ? `ARM PIT · ${PIT_COST} 🪙`
             : `NEED ${PIT_COST} 🪙 TO ARM`;
         }
+      } else if (near.kind === 'forge' || near.kind === 'campfire'){
+        const cost = game.xpNext;
+        const prefix = near.kind === 'forge' ? 'FORGE' : 'REST + FORGE';
+        label = (game.xp >= cost) ? `${prefix} · ${cost} KI` : `${prefix} · NEED ${cost} KI`;
       } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
       else label = 'ENTER — ' + near.name;
       btn.textContent = label;
@@ -1795,6 +1826,14 @@ function dojoActivate(){
     shake = Math.max(shake, 4);
     for (let i=0;i<14;i++){ const a=rand(0,TAU), sp=rand(60,160);
       fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#d8362b' }); }
+    return;
+  }
+  if (s.kind === 'forge' || s.kind === 'campfire'){
+    if (game.xp < game.xpNext){
+      fx.push({ kind:'dmg', x:s.x, y:s.y-40, v:'NEED KI', t:0, life:1.0, vy:-30 });
+      return;
+    }
+    openUpgradePicker();
     return;
   }
   if (s.kind === 'run')  {
@@ -1841,13 +1880,19 @@ function exitDojoTo(fn){
 let cameFromDojo = false;
 
 function gainXP(n){
+  // Ki accumulates in game.xp; the player spends it manually at the Dojo's
+  // Forge or at any campfire. No auto-level-ups anymore.
   game.xp += n * player.xpMult;
-  while (game.xp >= game.xpNext){
-    game.xp -= game.xpNext;
-    game.level++;
-    game.xpNext = Math.round(50 + game.level*game.level*11.5 + game.level*30);
-    openLevelUp();
-  }
+}
+// Triggered by Forge or campfire interactions. If the player can't afford the
+// current xpNext, the picker stays closed.
+function openUpgradePicker(){
+  if (game.xp < game.xpNext) return false;
+  game.xp -= game.xpNext;
+  game.level++;
+  game.xpNext = Math.round(50 + game.level*game.level*11.5 + game.level*30);
+  openLevelUp();
+  return true;
 }
 
 // =====================================================================
@@ -2319,6 +2364,17 @@ function drawOrb(o){
     ctx.fillStyle = '#8b1f1a';
     ctx.fillRect(-2, -10, 4, 20);
     ctx.fillRect(-10, -2, 20, 4);
+  } else if (o.isLostKi){
+    // dropped ki from a prior death — purple bloodstain glow, much bigger
+    ctx.shadowColor = '#b388ff'; ctx.shadowBlur = 28*pulse;
+    ctx.fillStyle = 'rgba(180,130,255,0.85)';
+    ctx.beginPath(); ctx.arc(0, 0, 14*pulse, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(0, 0, 4, 0, TAU); ctx.fill();
+    // floating ki count
+    ctx.fillStyle = '#dac8ff'; ctx.font = 'bold 11px -apple-system,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(o.xp + ' ki', 0, -22);
   } else {
     ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=8;
     ctx.fillStyle = o.xp>1 ? '#7ce8ef' : '#4fd6e0';
@@ -3581,7 +3637,7 @@ addEventListener('keydown', e=>{
 function resetAllProgress(){
   META.ryo = 0; META.up = {}; META.runs = 0; META.bestTime = 0;
   META.bestLevel = 0; META.totalKills = 0; META.totalRyo = 0;
-  META.pitArmed = false;
+  META.pitArmed = false; META.lostKi = null;
   saveMeta();
   refreshTitleRyo();
 }
