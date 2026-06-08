@@ -389,9 +389,11 @@ function generateBuildings(){
     const d   = rand(2200, 2700);
     out.push(makeBuilding(shopTypes[i], Math.cos(ang)*d, Math.sin(ang)*d));
   }
-  // 7±2 random trap-camps scattered across the mid-range
+  // 4-6 random trap-camps scattered across the mid-range. Fewer than the
+  // previous 6-9 because every camp emits a continuous stream; nine of them
+  // overwhelmed the dojo before the player could even orient themselves.
   const trapTypes = ['bandits','shrine','cache'];
-  const n = 6 + ((Math.random()*4) | 0);   // 6-9
+  const n = 4 + ((Math.random()*3) | 0);   // 4-6
   for (let i=0; i<n; i++){
     out.push(makeBuilding(pick(trapTypes), ...findPlacement(out, 500, 1900)));
   }
@@ -770,8 +772,9 @@ function newGame(){
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // light seed crowd around the Dojo — the rest comes from the marcher stream
-  for (let i=0;i<6;i++) spawnEnemy(false, rand(380, 620));
+  // tiny seed crowd around the Dojo — the player should have a moment to
+  // orient themselves before the marcher streams start arriving from camps
+  for (let i=0;i<3;i++) spawnEnemy(false, rand(550, 850));
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -829,11 +832,11 @@ const ENEMY_TYPES = {
   brute:   { hp:120, speed:30, r:18, dmg:18, xp:5, color:'#4a2a44', tier:3, sight:170, callR:130, aggro:true  },
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
-function spawnInterval(){ return Math.max(0.18, 0.72 - game.t * 0.0045); }
-// Per fresh-camp stream cadence. With 3 fresh camps that's ~1.7s/marcher
-// at game start, closing toward ~0.83s late. Clearing a camp permanently
-// shuts off that lane.
-function campStreamInterval(){ return Math.max(2.5, 5.0 - game.t * 0.020); }
+function spawnInterval(){ return Math.max(0.5, 1.5 - game.t * 0.005); }
+// Per fresh-camp stream cadence. Each fresh camp emits one footpad on this
+// interval. With ~5 active camps that's about one marcher every ~1.6s at
+// game start, halving by the late game as the interval drops to 4s.
+function campStreamInterval(){ return Math.max(4.0, 8.0 - game.t * 0.015); }
 
 function spawnMarcherFromCamp(camp){
   if (!game || !game.buildings) return;
@@ -1365,11 +1368,15 @@ function update(dt){
       const ci = campStreamInterval();
       for (const b of game.buildings){
         if (b.type === 'dojo' || b.state === 'cleared') continue;
-        // approach trigger
+        // approach trigger applies to camps AND shops (both have bosses)
         if (b.state === 'fresh'){
           const dx = P.x - b.x, dy = P.y - b.y;
           if (dx*dx + dy*dy < CAMP_TRIGGER_R * CAMP_TRIGGER_R) spawnCampBoss(b);
         }
+        // marcher stream: trap-camps only. Shop buildings ARE the boss
+        // encounter — adding a marcher stream on top made the early game an
+        // unmanageable flood.
+        if (b.shopGroup) continue;
         b.streamAcc = (b.streamAcc || 0) + dt;
         while (b.streamAcc >= ci){ b.streamAcc -= ci; spawnMarcherFromCamp(b); }
       }
@@ -1660,12 +1667,11 @@ function update(dt){
       if (b.state === 'active') checkCampCleared(b);
     }
   }
-  // drop dead enemies and cull strays that wandered too far. Dummies and
-  // trap-spawned enemies are immortal (the latter so they can't escape the cleared check).
+  // drop dead enemies and cull strays that wandered too far. Dummies, world
+  // bosses, and marchers are all cull-exempt for their own reasons.
   const cullR2 = 1100 * 1100;
   enemies = enemies.filter(e => {
     if (e.dummy) return true;
-    if (e.fromTrap && !e.dead) return true;
     if (e.dead) return false;
     if (e.boss) return true;
     // marchers always persist — they originate from far across the map and
