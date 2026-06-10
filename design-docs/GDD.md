@@ -25,7 +25,7 @@ move to dodge / herd enemies  →  weapons auto-hit  →  foes drop ki
    →  stronger build  →  bigger swarm  →  repeat until you fall (or the timer ends)
 ```
 
-A run is a single continuous arena (infinite scroll, camera follows the player). No menus mid-run except the level-up draft (which pauses time).
+A run takes place in a maze: a solid mass of forest with winding paths carved through it, connecting the Dojo to every building, with clearings at each point of interest and dead-end spurs for exploration. The camera follows the player. No menus mid-run except the level-up draft (which pauses time).
 
 ---
 

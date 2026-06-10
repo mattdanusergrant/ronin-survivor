@@ -462,54 +462,188 @@ function findPlacement(existing, minD, maxD){
   return [Math.cos(ang)*minD, Math.sin(ang)*minD];
 }
 
-// Static map decoration / collision: lakes (dark blue) and thickets (dark
-// green). Player and enemies are pushed out of their radius; projectiles
-// fly over them. Placed to avoid buildings; minor visual interest + a few
-// detours, no traps or mazes.
-function generateObstacles(buildings){
-  const out = [];
-  const TARGET = 28;
-  for (let i=0; i<TARGET; i++){
-    let placed = null;
-    for (let a=0; a<24 && !placed; a++){
-      const type = pick(['lake', 'thicket', 'thicket']);   // ~2× more thickets than lakes
-      const r = type === 'lake' ? rand(85, 165) : rand(55, 115);
-      const ang = rand(0, TAU), d = rand(220, 2700);
-      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
-      // keep building doors approachable AND don't pile obstacles on each other
-      const nearBuilding = buildings.some(b => Math.hypot(b.x-x, b.y-y) < (200 + r));
-      const nearObstacle = out.some(o => Math.hypot(o.x-x, o.y-y) < (o.r + r + 20));
-      if (!nearBuilding && !nearObstacle) placed = { type, x, y, r };
-    }
-    if (placed) out.push(placed);
+// ---------- THE MAZE ----------
+// The run-world is no longer an open field with scattered obstacles: it is a
+// solid mass of forest (thickets + lakes) with a network of winding paths
+// carved through it. Paths connect the Dojo to every building, with a few
+// extra cross-links so the maze has loops, plus an open clearing around each
+// building and campfire. Movable entities collide with the forest circles;
+// projectiles still fly over them.
+const MAZE = {
+  R: 3150,             // forest fill radius — past the last building it's solid wall
+  HW: 85,              // corridor half-width (min carved path width = 2×HW)
+  CLEAR_BUILDING: 230, // open ground around every building
+  CLEAR_CAMPFIRE: 150, // open ground around every campfire
+  STEP: 120, RMIN: 105, RMAX: 145, // fill grid spacing + wall-circle radii (overlap ⇒ no gaps)
+};
+
+function distToSeg(px, py, s){
+  const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+  const l2 = dx*dx + dy*dy;
+  const t = l2 ? clamp(((px - s.x1)*dx + (py - s.y1)*dy) / l2, 0, 1) : 0;
+  return Math.hypot(px - (s.x1 + dx*t), py - (s.y1 + dy*t));
+}
+
+// Subdivide a straight connection into a winding polyline.
+function windPath(ax, ay, bx, by){
+  const len = Math.hypot(bx-ax, by-ay), n = Math.max(2, Math.round(len/450));
+  const nx = -(by-ay)/len, ny = (bx-ax)/len;        // unit perpendicular
+  const pts = [{x:ax, y:ay}];
+  for (let i=1; i<n; i++){
+    const t = i/n, off = rand(-1, 1) * Math.min(240, len*0.22);
+    pts.push({ x: ax+(bx-ax)*t + nx*off, y: ay+(by-ay)*t + ny*off });
   }
-  return out;
+  pts.push({x:bx, y:by});
+  return pts;
+}
+
+function generatePaths(buildings){
+  const N = buildings.length;
+  const dist = (i,j) => Math.hypot(buildings[i].x-buildings[j].x, buildings[i].y-buildings[j].y);
+  // minimum spanning tree rooted at the Dojo (index 0) → every building reachable
+  const inTree = new Set([0]), links = [];
+  while (inTree.size < N){
+    let bi=-1, bj=-1, bd=Infinity;
+    for (const i of inTree) for (let j=0; j<N; j++){
+      if (!inTree.has(j) && dist(i,j) < bd){ bd = dist(i,j); bi = i; bj = j; }
+    }
+    inTree.add(bj); links.push([bi,bj]);
+  }
+  // a few extra cross-links so the maze has loops, not just dead-end branches
+  const extras = [];
+  for (let i=0;i<N;i++) for (let j=i+1;j<N;j++){
+    if (links.some(([a,b]) => (a===i&&b===j)||(a===j&&b===i))) continue;
+    if (dist(i,j) < 1900) extras.push([i,j]);
+  }
+  shuffle(extras);
+  links.push(...extras.slice(0,3));
+  // bend every link into a winding corridor
+  const edges = [], segs = [], adj = buildings.map(()=>[]);
+  for (const [i,j] of links){
+    const pts = windPath(buildings[i].x, buildings[i].y, buildings[j].x, buildings[j].y);
+    adj[i].push(edges.length); adj[j].push(edges.length);
+    edges.push({ a:i, b:j, pts });
+    for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y });
+  }
+  // dead-end spurs off the main network — the maze's blind alleys. Each tip
+  // gets a small clearing (and is a campfire candidate like any path point).
+  const linkEdgeCount = edges.length, clearings = [];
+  for (let s=0; s<5; s++){
+    const host = edges[(Math.random()*linkEdgeCount)|0].pts;
+    const from = host[1 + ((Math.random()*(host.length-2))|0)] || host[0];
+    const ang  = rand(0, TAU), len = rand(500, 1000);
+    let tx = from.x + Math.cos(ang)*len, ty = from.y + Math.sin(ang)*len;
+    const td = Math.hypot(tx, ty);
+    if (td > MAZE.R - 350){ tx *= (MAZE.R-350)/td; ty *= (MAZE.R-350)/td; }
+    const pts = windPath(from.x, from.y, tx, ty);
+    edges.push({ a:-1, b:-1, pts });
+    for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y });
+    clearings.push({ x:tx, y:ty, r:140 });
+  }
+  // BFS from the Dojo → per-building marcher route (waypoints back to the Dojo)
+  const parentEdge = new Array(N).fill(-1), seen = new Array(N).fill(false);
+  seen[0] = true; const q = [0];
+  while (q.length){
+    const u = q.shift();
+    for (const ei of adj[u]){
+      const e = edges[ei], v = e.a===u ? e.b : e.a;
+      if (!seen[v]){ seen[v] = true; parentEdge[v] = ei; q.push(v); }
+    }
+  }
+  for (let i=1; i<N; i++){
+    const route = [];
+    let u = i;
+    while (u !== 0 && parentEdge[u] !== -1){
+      const e = edges[parentEdge[u]];
+      const pts = e.a === u ? e.pts : e.pts.slice().reverse();
+      for (const p of pts) route.push(p);
+      u = e.a === u ? e.b : e.a;
+    }
+    buildings[i].route = route;
+  }
+  return { edges, segs, clearings };
 }
 
 // Rest points. Standing within a campfire's radius slowly heals the player.
-function generateCampfires(buildings, obstacles){
-  const out = [];
-  const TARGET = 9;
-  for (let i=0; i<TARGET; i++){
-    let placed = null;
-    for (let a=0; a<24 && !placed; a++){
-      const ang = rand(0, TAU), d = rand(400, 2100);
-      const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
-      const nearBuilding = buildings.some(b => Math.hypot(b.x-x, b.y-y) < 200);
-      const nearObstacle = obstacles.some(o => Math.hypot(o.x-x, o.y-y) < (o.r + 30));
-      const nearOther    = out.some(c => Math.hypot(c.x-x, c.y-y) < 320);
-      if (!nearBuilding && !nearObstacle && !nearOther) placed = { x, y };
+// Campfires sit in small clearings strung along the carved paths.
+function generateCampfires(buildings, paths){
+  const cands = [];
+  for (const e of paths.edges)
+    for (let k=1; k<e.pts.length; k++){
+      const a = e.pts[k-1], b = e.pts[k], n = Math.max(1, Math.round(Math.hypot(b.x-a.x, b.y-a.y)/320));
+      for (let s=1; s<=n; s++) cands.push({ x: a.x+(b.x-a.x)*s/(n+1), y: a.y+(b.y-a.y)*s/(n+1) });
     }
-    if (placed) out.push({ x: placed.x, y: placed.y, r: 60 });
+  shuffle(cands);
+  const out = [];
+  for (const c of cands){
+    if (out.length >= 9) break;
+    if (buildings.some(b => Math.hypot(b.x-c.x, b.y-c.y) < 360)) continue;
+    if (out.some(o => Math.hypot(o.x-c.x, o.y-c.y) < 430)) continue;
+    out.push({ x:c.x, y:c.y, r:60 });
   }
   return out;
 }
 
-// Push a movable entity (player or enemy) out of any obstacle it has
-// overlapped. Cheap N×M test (a couple dozen of each at most).
+// Fill everything that isn't path or clearing with solid forest.
+function generateObstacles(buildings, paths, campfires){
+  const out = [];
+  const { R, STEP, HW } = MAZE;
+  for (let gy=-R; gy<=R; gy+=STEP){
+    for (let gx=-R; gx<=R; gx+=STEP){
+      const x = gx + rand(-14,14), y = gy + rand(-14,14);
+      if (x*x + y*y > R*R) continue;
+      const r = rand(MAZE.RMIN, MAZE.RMAX);
+      if (buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + r)) continue;
+      if (campfires.some(c => Math.hypot(c.x-x, c.y-y) < MAZE.CLEAR_CAMPFIRE + r)) continue;
+      if (paths.clearings.some(c => Math.hypot(c.x-x, c.y-y) < c.r + r)) continue;
+      let onPath = false;
+      for (const s of paths.segs){ if (distToSeg(x, y, s) < HW + r){ onPath = true; break; } }
+      if (onPath) continue;
+      out.push({ type: Math.random() < 0.15 ? 'lake' : 'thicket', x, y, r });
+    }
+  }
+  return out;
+}
+
+// ~1500 wall circles is too many for the old brute-force collision scan, so
+// they're indexed into a coarse spatial hash once per run.
+const OBGRID_CELL = 320;
+function buildObstacleGrid(obs){
+  const m = new Map();
+  for (const o of obs){
+    const x0 = Math.floor((o.x-o.r)/OBGRID_CELL), x1 = Math.floor((o.x+o.r)/OBGRID_CELL);
+    const y0 = Math.floor((o.y-o.r)/OBGRID_CELL), y1 = Math.floor((o.y+o.r)/OBGRID_CELL);
+    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
+      const k = cx + ',' + cy;
+      let cell = m.get(k);
+      if (!cell) m.set(k, cell = []);
+      cell.push(o);
+    }
+  }
+  return m;
+}
+function forEachObstacleNear(x, y, r, fn){
+  if (!game || !game.obGrid) return;
+  const x0 = Math.floor((x-r)/OBGRID_CELL), x1 = Math.floor((x+r)/OBGRID_CELL);
+  const y0 = Math.floor((y-r)/OBGRID_CELL), y1 = Math.floor((y+r)/OBGRID_CELL);
+  for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
+    const cell = game.obGrid.get(cx + ',' + cy);
+    if (cell) for (const o of cell) fn(o);
+  }
+}
+function isWalkable(x, y, r){
+  let ok = true;
+  forEachObstacleNear(x, y, r, o => {
+    const dx = x-o.x, dy = y-o.y, min = o.r + r;
+    if (dx*dx + dy*dy < min*min) ok = false;
+  });
+  return ok;
+}
+
+// Push a movable entity (player or enemy) out of any wall circle it has
+// overlapped. Spatial hash keeps this a handful of tests per entity.
 function pushOutOfObstacles(e){
-  if (!game || !game.obstacles) return;
-  for (const o of game.obstacles){
+  forEachObstacleNear(e.x, e.y, e.r, o => {
     const dx = e.x - o.x, dy = e.y - o.y, d2 = dx*dx + dy*dy;
     const min = o.r + e.r;
     if (d2 > 0.0001 && d2 < min*min){
@@ -517,7 +651,7 @@ function pushOutOfObstacles(e){
       e.x = o.x + dx/d * min;
       e.y = o.y + dy/d * min;
     }
-  }
+  });
 }
 function makeBuilding(type, x, y){
   const cfg = BUILDING_TYPES[type];
@@ -803,8 +937,10 @@ function newGame(){
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   game.buildings = generateBuildings();
-  game.obstacles = generateObstacles(game.buildings);
-  game.campfires = generateCampfires(game.buildings, game.obstacles);
+  game.paths     = generatePaths(game.buildings);     // carve the maze corridors + marcher routes
+  game.campfires = generateCampfires(game.buildings, game.paths);
+  game.obstacles = generateObstacles(game.buildings, game.paths, game.campfires);
+  game.obGrid    = buildObstacleGrid(game.obstacles);
   // spawn the samurai right on the Dojo door, between the four pre-armed turrets
   const dojoB = game.buildings.find(b => b.type === 'dojo');
   if (dojoB){ player.x = dojoB.x; player.y = dojoB.y; }
@@ -894,14 +1030,22 @@ function spawnMarcherFromCamp(camp){
     dmg: t.dmg, xp: t.xp, color: t.color,
     hit: 0, boss: false, sep: 0,
     state: 'march', marchTo: dojo, fromCamp: camp,
+    route: camp.route || null, routeIdx: 0,   // waypoints along the carved path to the Dojo
     sight: t.sight, callR: t.callR,
     wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
   });
 }
 
 function spawnEnemy(boss=false, distOverride=null){
-  const ang = rand(0, TAU), dist = distOverride !== null ? distOverride : Math.max(W,H)/viewScale * 0.62 + 40;
-  const x = game.cam.x + Math.cos(ang) * dist, y = game.cam.y + Math.sin(ang) * dist;
+  // the world is mostly solid forest — re-roll the angle until the point
+  // lands on carved ground, or skip (the spawn loop retries constantly)
+  let x = 0, y = 0, open = false;
+  for (let a=0; a<(boss?40:12) && !open; a++){
+    const ang = rand(0, TAU), dist = distOverride !== null ? distOverride : Math.max(W,H)/viewScale * 0.62 + 40;
+    x = game.cam.x + Math.cos(ang) * dist; y = game.cam.y + Math.sin(ang) * dist;
+    open = isWalkable(x, y, boss ? 30 : 18);
+  }
+  if (!open) return;
   if (boss){
     enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
       xp:60, color:'#7a1f1a', boss:true, hit:0, sep:0, state:'chase',
@@ -1394,7 +1538,9 @@ function update(dt){
     P.y = clamp(P.y, -hh, hh);
     game.cam.x = 0; game.cam.y = 0;       // fixed camera
   } else {
-    pushOutOfObstacles(P);                // lakes / thickets shove you out
+    pushOutOfObstacles(P);                // the forest walls shove you out
+    const pd = Math.hypot(P.x, P.y);      // hard world edge beyond the forest
+    if (pd > MAZE.R){ P.x *= MAZE.R/pd; P.y *= MAZE.R/pd; }
     game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
     game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
   }
@@ -1478,8 +1624,13 @@ function update(dt){
     }
 
     if (e.state === 'march'){
-      // steady drift toward the marcher's target building (the Dojo)
-      const t = e.marchTo;
+      // walk the carved path toward the Dojo, waypoint by waypoint
+      let t = e.marchTo;
+      if (e.route){
+        while (e.routeIdx < e.route.length &&
+               Math.hypot(e.route[e.routeIdx].x - e.x, e.route[e.routeIdx].y - e.y) < 60) e.routeIdx++;
+        if (e.routeIdx < e.route.length) t = e.route[e.routeIdx];
+      }
       if (t){
         const tdx = t.x - e.x, tdy = t.y - e.y, td = Math.hypot(tdx,tdy) || 1;
         e.x += tdx/td * e.speed * dt;
@@ -2096,8 +2247,14 @@ function draw(){
   if (game.dojoMode) drawDojoRoom();
   else {
     drawGround(camX, camY, VW, VH);
-    // obstacles + campfires draw under buildings (they're ambient terrain)
-    if (game.obstacles) for (const o of game.obstacles) drawObstacle(o);
+    drawPaths();   // faint dirt tint along the carved corridors
+    // obstacles + campfires draw under buildings (they're ambient terrain).
+    // ~1500 forest circles exist — only draw the on-screen ones.
+    if (game.obstacles) for (const o of game.obstacles){
+      if (o.x + o.r < camX || o.x - o.r > camX + VW ||
+          o.y + o.r < camY || o.y - o.r > camY + VH) continue;
+      drawObstacle(o);
+    }
     if (game.campfires) for (const c of game.campfires) drawCampfire(c);
     if (game.buildings) for (const b of game.buildings){
       drawBuilding(b);
@@ -2149,6 +2306,21 @@ function drawGround(camX, camY, VW, VH){
   const grd = ctx.createRadialGradient(cx,cy,40, cx,cy, Math.max(VW,VH)*0.7);
   grd.addColorStop(0,'rgba(216,54,43,0.05)'); grd.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle = grd; ctx.fillRect(camX,camY,VW,VH);
+}
+
+function drawPaths(){
+  if (!game.paths) return;
+  ctx.save();
+  ctx.strokeStyle = 'rgba(150,115,70,0.07)';
+  ctx.lineWidth = MAZE.HW * 2;
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  for (const e of game.paths.edges){
+    ctx.moveTo(e.pts[0].x, e.pts[0].y);
+    for (let k=1; k<e.pts.length; k++) ctx.lineTo(e.pts[k].x, e.pts[k].y);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawDojoRoom(){
