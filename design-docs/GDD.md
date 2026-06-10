@@ -25,7 +25,7 @@ move to dodge / herd enemies  →  weapons auto-hit  →  foes drop ki
    →  stronger build  →  bigger swarm  →  repeat until you fall (or the timer ends)
 ```
 
-A run takes place in a maze: a solid mass of forest with winding paths carved through it, connecting the Dojo to every building, with clearings at each point of interest and dead-end spurs for exploration. The camera follows the player. No menus mid-run except the level-up draft (which pauses time).
+A run takes place in a gated progression tree carved out of solid forest: the Dojo sits in a corner of the map, a single straight tutorial road leads to the first bandit camp, and the world immediately branches from there into deeper zones. Every zone-boss building barricades the roads to its children until it falls. Campfires (checkpoints) only appear where bandit camps are razed. The camera follows the player. No menus mid-run except the level-up draft (which pauses time).
 
 ---
 

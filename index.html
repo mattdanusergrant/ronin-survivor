@@ -425,49 +425,74 @@ const BUILDING_TYPES = {
   spirit:  { name:'Spirit Pool',    ico:'⚡', tag:'Utility shop', color:'#4fa098', shopGroup:'utility',
              boss: { name:'The Trickster',   hp:340, speed:62, dmg:18, r:24, xp:42 } },
 };
+// The world is a gated progression tree. The Dojo sits in a corner of the
+// map; a single straight "tutorial" road leads to the first bandit camp,
+// which immediately branches. Every deeper building is a zone boss whose
+// gates block the roads onward until it falls.
 function generateBuildings(){
-  const out = [];
-  // Dojo at the center of the world — everything else is anchored relative to it
-  out.push(makeBuilding('dojo', 0, 0));
-  // 3 shop buildings — pushed far out at evenly-separated angles
-  const shopTypes = shuffle(['smithy','vigor','spirit']);
-  for (let i=0; i<3; i++){
-    const ang = (i / 3) * TAU + rand(-0.35, 0.35);
-    const d   = rand(2200, 2700);
-    out.push(makeBuilding(shopTypes[i], Math.cos(ang)*d, Math.sin(ang)*d));
+  const a0 = rand(0, TAU);                       // which corner of the world
+  const dojo = makeBuilding('dojo', Math.cos(a0)*(MAZE.R-650), Math.sin(a0)*(MAZE.R-650));
+  dojo.depth = 0;
+  const out = [dojo];
+  const inward = a0 + Math.PI;                   // tutorial road points into the map
+  const camp1 = makeBuilding('bandits', dojo.x + Math.cos(inward)*1000, dojo.y + Math.sin(inward)*1000);
+  camp1.parent = dojo; camp1.depth = 1; camp1.heading = inward; camp1.tutorial = true;
+  out.push(camp1);
+
+  function addChild(parent, type, angOff){
+    let best = null;
+    for (let t=0; t<30 && !best; t++){
+      const ang = t < 12 ? parent.heading + angOff + rand(-0.25, 0.25)
+                         : parent.heading + rand(-1.4, 1.4);
+      const len = rand(850, 1200);
+      const x = parent.x + Math.cos(ang)*len, y = parent.y + Math.sin(ang)*len;
+      if (Math.hypot(x, y) > MAZE.R - 600) continue;
+      const minSep = t < 18 ? 700 : 520;         // zones stay discrete; relax if cramped
+      if (out.some(b => Math.hypot(b.x-x, b.y-y) < minSep)) continue;
+      best = { x, y, ang };
+    }
+    if (!best){   // forced fallback — the asked-for angle, capped inside the world
+      const ang = parent.heading + angOff;
+      let x = parent.x + Math.cos(ang)*900, y = parent.y + Math.sin(ang)*900;
+      const d = Math.hypot(x, y);
+      if (d > MAZE.R - 600){ x *= (MAZE.R-600)/d; y *= (MAZE.R-600)/d; }
+      best = { x, y, ang };
+    }
+    const b = makeBuilding(type, best.x, best.y);
+    b.parent = parent; b.depth = parent.depth + 1; b.heading = best.ang;
+    out.push(b);
+    return b;
   }
-  // 4-6 random trap-camps scattered across the mid-range. Fewer than the
-  // previous 6-9 because every camp emits a continuous stream; nine of them
-  // overwhelmed the dojo before the player could even orient themselves.
-  const trapTypes = ['bandits','shrine','cache'];
-  const n = 4 + ((Math.random()*3) | 0);   // 4-6
-  for (let i=0; i<n; i++){
-    out.push(makeBuilding(pick(trapTypes), ...findPlacement(out, 500, 1900)));
-  }
+
+  // zone 2: the branch right after the tutorial camp
+  const z2 = shuffle(['bandits', 'smithy']);
+  const c2a = addChild(camp1, z2[0], -0.55);
+  const c2b = addChild(camp1, z2[1], +0.55);
+  // zone 3: one branch forks again, the other runs on
+  const z3 = shuffle(['shrine', 'vigor', 'cache']);
+  const [forky, runner] = shuffle([c2a, c2b]);
+  const c3a = addChild(forky,  z3[0], -0.5);
+  const c3b = addChild(forky,  z3[1], +0.5);
+  const c3c = addChild(runner, z3[2], rand(-0.3, 0.3));
+  // zone 4: the deep end
+  const z4 = shuffle(['bandits', 'spirit']);
+  const hosts = shuffle([c3a, c3b, c3c]);
+  addChild(hosts[0], z4[0], rand(-0.4, 0.4));
+  addChild(hosts[1], z4[1], rand(-0.4, 0.4));
   return out;
 }
 function shuffle(arr){
   for (let i=arr.length-1; i>0; i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]]; }
   return arr;
 }
-function findPlacement(existing, minD, maxD){
-  for (let a=0; a<40; a++){
-    const ang = rand(0, TAU), d = rand(minD, maxD);
-    const x = Math.cos(ang)*d, y = Math.sin(ang)*d;
-    const tooClose = existing.some(b => Math.hypot(b.x-x, b.y-y) < 380);
-    if (!tooClose) return [x, y];
-  }
-  // fallback: forced ring at the inner radius
-  const ang = rand(0, TAU);
-  return [Math.cos(ang)*minD, Math.sin(ang)*minD];
-}
 
 // ---------- THE MAZE ----------
-// The run-world is no longer an open field with scattered obstacles: it is a
-// solid mass of forest (thickets + lakes) with a network of winding paths
-// carved through it. Paths connect the Dojo to every building, with a few
-// extra cross-links so the maze has loops, plus an open clearing around each
-// building and campfire. Movable entities collide with the forest circles;
+// The run-world is a solid mass of forest (thickets + lakes) with roads
+// carved through it, laid out as a gated progression tree: one straight
+// tutorial road from the corner Dojo to the first bandit camp, then
+// branching winding roads into deeper zones. Each zone-boss building
+// padlocks the roads to its children with barricade gates that come down
+// when it's cleared. Movable entities collide with the forest circles;
 // projectiles still fly over them.
 const MAZE = {
   R: 3150,             // forest fill radius — past the last building it's solid wall
@@ -497,95 +522,117 @@ function windPath(ax, ay, bx, by){
   return pts;
 }
 
+// A road is only a gate if zones can't touch by accident: every non-adjacent
+// corridor and building must stay far enough away that the forest between
+// them never thins through.
+function pathKeepsItsDistance(pts, b, buildings, edges){
+  for (let k=1; k<pts.length; k++){
+    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1, n = Math.ceil(L/80);
+    for (let s=0; s<=n; s++){
+      const x = a.x+(c.x-a.x)*s/n, y = a.y+(c.y-a.y)*s/n;
+      // junction areas around this road's own endpoints are exempt
+      if (Math.hypot(x-b.x, y-b.y) < 420 || Math.hypot(x-b.parent.x, y-b.parent.y) < 420) continue;
+      for (const o of buildings)
+        if (o !== b && o !== b.parent && Math.hypot(o.x-x, o.y-y) < 520) return false;
+      for (const e of edges){
+        // roads sharing an endpoint may converge near the junction — harmless
+        if (e.of === b || e.of === b.parent || e.of.parent === b || e.of.parent === b.parent) continue;
+        for (let m=1; m<e.pts.length; m++)
+          if (distToSeg(x, y, { x1:e.pts[m-1].x, y1:e.pts[m-1].y, x2:e.pts[m].x, y2:e.pts[m].y }) < 500) return false;
+      }
+    }
+  }
+  return true;
+}
+
 function generatePaths(buildings){
-  const N = buildings.length;
-  const dist = (i,j) => Math.hypot(buildings[i].x-buildings[j].x, buildings[i].y-buildings[j].y);
-  // minimum spanning tree rooted at the Dojo (index 0) → every building reachable
-  const inTree = new Set([0]), links = [];
-  while (inTree.size < N){
-    let bi=-1, bj=-1, bd=Infinity;
-    for (const i of inTree) for (let j=0; j<N; j++){
-      if (!inTree.has(j) && dist(i,j) < bd){ bd = dist(i,j); bi = i; bj = j; }
+  const edges = [], segs = [];
+  const addSegs = pts => { for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y }); };
+  // one corridor per tree edge. The tutorial road is dead straight; deeper
+  // roads wind, re-rolled if they stray near an unrelated zone.
+  for (const b of buildings){
+    if (!b.parent) continue;
+    let pts = null;
+    if (b.tutorial) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];
+    else {
+      for (let t=0; t<12 && !pts; t++){
+        const cand = windPath(b.parent.x, b.parent.y, b.x, b.y);
+        if (pathKeepsItsDistance(cand, b, buildings, edges)) pts = cand;
+      }
+      if (!pts) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];   // straight fallback
     }
-    inTree.add(bj); links.push([bi,bj]);
+    b.edgePts = pts;                       // oriented parent → b
+    edges.push({ pts, of: b });
+    addSegs(pts);
   }
-  // a few extra cross-links so the maze has loops, not just dead-end branches
-  const extras = [];
-  for (let i=0;i<N;i++) for (let j=i+1;j<N;j++){
-    if (links.some(([a,b]) => (a===i&&b===j)||(a===j&&b===i))) continue;
-    if (dist(i,j) < 1900) extras.push([i,j]);
-  }
-  shuffle(extras);
-  links.push(...extras.slice(0,3));
-  // bend every link into a winding corridor
-  const edges = [], segs = [], adj = buildings.map(()=>[]);
-  for (const [i,j] of links){
-    const pts = windPath(buildings[i].x, buildings[i].y, buildings[j].x, buildings[j].y);
-    adj[i].push(edges.length); adj[j].push(edges.length);
-    edges.push({ a:i, b:j, pts });
-    for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y });
-  }
-  // dead-end spurs off the main network — the maze's blind alleys. Each tip
-  // gets a small clearing (and is a campfire candidate like any path point).
-  const linkEdgeCount = edges.length, clearings = [];
-  for (let s=0; s<5; s++){
-    const host = edges[(Math.random()*linkEdgeCount)|0].pts;
-    const from = host[1 + ((Math.random()*(host.length-2))|0)] || host[0];
-    const ang  = rand(0, TAU), len = rand(500, 1000);
-    let tx = from.x + Math.cos(ang)*len, ty = from.y + Math.sin(ang)*len;
-    const td = Math.hypot(tx, ty);
-    if (td > MAZE.R - 350){ tx *= (MAZE.R-350)/td; ty *= (MAZE.R-350)/td; }
-    const pts = windPath(from.x, from.y, tx, ty);
-    edges.push({ a:-1, b:-1, pts });
-    for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y });
-    clearings.push({ x:tx, y:ty, r:140 });
-  }
-  // BFS from the Dojo → per-building marcher route (waypoints back to the Dojo)
-  const parentEdge = new Array(N).fill(-1), seen = new Array(N).fill(false);
-  seen[0] = true; const q = [0];
-  while (q.length){
-    const u = q.shift();
-    for (const ei of adj[u]){
-      const e = edges[ei], v = e.a===u ? e.b : e.a;
-      if (!seen[v]){ seen[v] = true; parentEdge[v] = ei; q.push(v); }
-    }
-  }
-  for (let i=1; i<N; i++){
+  // marcher route per building: own road reversed, then each ancestor's,
+  // ending at the Dojo
+  for (const b of buildings){
+    if (!b.parent) continue;
     const route = [];
-    let u = i;
-    while (u !== 0 && parentEdge[u] !== -1){
-      const e = edges[parentEdge[u]];
-      const pts = e.a === u ? e.pts : e.pts.slice().reverse();
-      for (const p of pts) route.push(p);
-      u = e.a === u ? e.b : e.a;
+    let u = b;
+    while (u && u.parent){
+      const rev = u.edgePts.slice().reverse();
+      for (const p of rev) route.push(p);
+      u = u.parent;
     }
-    buildings[i].route = route;
+    b.route = route;
   }
-  return { edges, segs, clearings };
+  return { edges, segs };
 }
 
-// Rest points. Standing within a campfire's radius slowly heals the player.
-// Campfires sit in small clearings strung along the carved paths.
-function generateCampfires(buildings, paths){
-  const cands = [];
-  for (const e of paths.edges)
-    for (let k=1; k<e.pts.length; k++){
-      const a = e.pts[k-1], b = e.pts[k], n = Math.max(1, Math.round(Math.hypot(b.x-a.x, b.y-a.y)/320));
-      for (let s=1; s<=n; s++) cands.push({ x: a.x+(b.x-a.x)*s/(n+1), y: a.y+(b.y-a.y)*s/(n+1) });
+// Walk forward along a polyline by dist; returns the point + unit perpendicular.
+function walkAlong(pts, dist){
+  let remain = dist;
+  for (let k=1; k<pts.length; k++){
+    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
+    if (remain <= L){
+      const t = remain/L;
+      return { x:a.x+(c.x-a.x)*t, y:a.y+(c.y-a.y)*t, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
     }
-  shuffle(cands);
-  const out = [];
-  for (const c of cands){
-    if (out.length >= 9) break;
-    if (buildings.some(b => Math.hypot(b.x-c.x, b.y-c.y) < 360)) continue;
-    if (out.some(o => Math.hypot(o.x-c.x, o.y-c.y) < 430)) continue;
-    out.push({ x:c.x, y:c.y, r:60 });
+    remain -= L;
   }
-  return out;
+  const a = pts[pts.length-2], c = pts[pts.length-1], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
+  return { x:c.x, y:c.y, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
 }
 
-// Fill everything that isn't path or clearing with solid forest.
-function generateObstacles(buildings, paths, campfires){
+// Every zone boss padlocks the roads to its children: a barricade of gate
+// circles across each child corridor just past the boss's clearing. They
+// come down (openGates) when the boss building is cleared.
+function generateGates(buildings){
+  const gates = [];
+  for (const b of buildings){
+    if (!b.parent || b.parent.type === 'dojo') continue;
+    const p = walkAlong(b.edgePts, MAZE.CLEAR_BUILDING + 150);
+    const set = [];
+    for (const off of [-150, -50, 50, 150])
+      set.push({ type:'gate', x:p.x + p.nx*off, y:p.y + p.ny*off, r:62 });
+    (b.parent.gates = b.parent.gates || []).push(...set);
+    gates.push(...set);
+  }
+  return gates;
+}
+function openGates(b){
+  if (!b.gates || !b.gates.length) return;
+  for (const g of b.gates){
+    g.dead = true;
+    for (let i=0;i<8;i++){ const a=rand(0,TAU), sp=rand(60,160);
+      fx.push({ kind:'spark', x:g.x, y:g.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#b58a3a' }); }
+  }
+  b.gates = [];
+  game.obstacles = game.obstacles.filter(o => !o.dead);
+  game.obGrid = buildObstacleGrid(game.obstacles);
+}
+// a camp's marcher lane is open only once every boss between it and the
+// Dojo has fallen
+function campMayStream(b){
+  for (let u = b.parent; u && u.type !== 'dojo'; u = u.parent)
+    if (u.state !== 'cleared') return false;
+  return true;
+}
+
+// Fill everything that isn't road or clearing with solid forest.
+function generateObstacles(buildings, paths){
   const out = [];
   const { R, STEP, HW } = MAZE;
   for (let gy=-R; gy<=R; gy+=STEP){
@@ -594,8 +641,6 @@ function generateObstacles(buildings, paths, campfires){
       if (x*x + y*y > R*R) continue;
       const r = rand(MAZE.RMIN, MAZE.RMAX);
       if (buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + r)) continue;
-      if (campfires.some(c => Math.hypot(c.x-x, c.y-y) < MAZE.CLEAR_CAMPFIRE + r)) continue;
-      if (paths.clearings.some(c => Math.hypot(c.x-x, c.y-y) < c.r + r)) continue;
       let onPath = false;
       for (const s of paths.segs){ if (distToSeg(x, y, s) < HW + r){ onPath = true; break; } }
       if (onPath) continue;
@@ -937,22 +982,26 @@ function newGame(){
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   game.buildings = generateBuildings();
-  game.paths     = generatePaths(game.buildings);     // carve the maze corridors + marcher routes
-  game.campfires = generateCampfires(game.buildings, game.paths);
-  game.obstacles = generateObstacles(game.buildings, game.paths, game.campfires);
+  game.paths     = generatePaths(game.buildings);     // tree of carved roads + marcher routes
+  game.obstacles = generateObstacles(game.buildings, game.paths);
+  game.obstacles.push(...generateGates(game.buildings));
   game.obGrid    = buildObstacleGrid(game.obstacles);
+  game.campfires = [];   // campfires only appear where bandit camps fall
   // spawn the samurai right on the Dojo door, between the four pre-armed turrets
   const dojoB = game.buildings.find(b => b.type === 'dojo');
-  if (dojoB){ player.x = dojoB.x; player.y = dojoB.y; }
+  if (dojoB){
+    player.x = dojoB.x; player.y = dojoB.y;
+    game.cam.x = dojoB.x; game.cam.y = dojoB.y;
+    game.checkpoint = { x: dojoB.x, y: dojoB.y, label: 'The Dojo' };
+  }
   const VW = W/viewScale, VH = H/viewScale;
-  for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
+  for (let i=0;i<26;i++) petals.push({ x:player.x+rand(-VW,VW), y:player.y+rand(-VH,VH), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // the camps' marcher streams are already underway when the run starts —
-  // a column of footpads from every camp, strung along its road with the
-  // lead marchers closing on the Dojo from each direction
+  // the tutorial road opens hot — the first camp's column is already
+  // strung along it, lead marchers closing on the Dojo
   for (const b of game.buildings){
-    if (b.type === 'dojo' || b.shopGroup) continue;
-    for (let i=0;i<4;i++) spawnMarcherFromCamp(b, 520 + i*300 + rand(-60, 60));
+    if (b.type === 'dojo' || b.shopGroup || !campMayStream(b)) continue;
+    for (let i=0;i<5;i++) spawnMarcherFromCamp(b, 300 + i*160 + rand(-40, 40));
   }
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
@@ -1110,7 +1159,8 @@ function spawnCampBoss(b){
   const cfg = BUILDING_TYPES[b.type] && BUILDING_TYPES[b.type].boss;
   if (!cfg) return;
   b.state = 'active';
-  const tm = timeMul();
+  // deeper zones field tougher bosses — +35% HP per zone past the first
+  const tm = timeMul() * (1 + 0.35 * Math.max(0, (b.depth || 1) - 1));
   const boss = {
     x: b.x, y: b.y, r: cfg.r,
     hp: cfg.hp * tm, maxhp: cfg.hp * tm,
@@ -1134,6 +1184,16 @@ function checkCampCleared(b){
   if (b.state !== 'active') return;
   if (!b.boss || b.boss.dead || b.boss.hp <= 0){
     b.state = 'cleared';
+    openGates(b);                       // the zone beyond this boss unlocks
+    if (b.type === 'bandits'){          // razed bandit camps leave a campfire
+      game.campfires.push({ x: b.x, y: b.y + 95, r: 60 });
+    }
+    // freshly exposed camps waste no time — their first marchers set out now
+    for (const c of game.buildings){
+      if (c.parent === b && !c.shopGroup && c.state === 'fresh' && campMayStream(c)){
+        for (let i=0;i<3;i++) spawnMarcherFromCamp(c);
+      }
+    }
     if (b.shopGroup){
       // shop building: free the structure — unlock 4 empty turret slots
       // and the door becomes interactable to open its shop overlay.
@@ -1632,6 +1692,9 @@ function update(dt){
         // encounter — adding a marcher stream on top made the early game an
         // unmanageable flood.
         if (b.shopGroup) continue;
+        // deep camps stay quiet until the bosses between them and the Dojo
+        // have fallen — clearing zones is what wakes the world up
+        if (!campMayStream(b)) continue;
         b.streamAcc = (b.streamAcc || 0) + dt;
         while (b.streamAcc >= ci){ b.streamAcc -= ci; spawnMarcherFromCamp(b); }
       }
@@ -2432,6 +2495,19 @@ function drawObstacle(o){
     // shoreline
     ctx.strokeStyle = 'rgba(80,60,40,0.55)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
+  } else if (o.type === 'gate'){
+    // boss barricade — crossed planks over a dark stump; falls when the
+    // zone's boss building is cleared
+    ctx.fillStyle = '#2a1d10';
+    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#5a4520'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, o.r*0.92, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 7; ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(-o.r*0.55, -o.r*0.55); ctx.lineTo(o.r*0.55,  o.r*0.55);
+    ctx.moveTo(-o.r*0.55,  o.r*0.55); ctx.lineTo(o.r*0.55, -o.r*0.55);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
   } else {
     // thicket — dark green with a few shrub clusters
     ctx.fillStyle = '#1c3520';
