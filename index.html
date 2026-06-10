@@ -278,6 +278,30 @@
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
+ctx.imageSmoothingEnabled = false;   // crisp pixels for sprite assets
+// Ronin sprite — JPEG with a white background; loader color-keys near-white
+// pixels to transparent so the figure sits cleanly on the world.
+const RONIN_SPRITE = (() => {
+  const off = document.createElement('canvas');
+  off._ready = false;
+  // In headless test envs createElement returns a bare stub; bail quietly.
+  if (typeof off.getContext !== 'function' || typeof Image === 'undefined') return off;
+  off.width = 32; off.height = 32;
+  const c = off.getContext('2d');
+  const img = new Image();
+  img.onload = () => {
+    c.drawImage(img, 0, 0, 32, 32);
+    const d = c.getImageData(0, 0, 32, 32);
+    for (let i = 0; i < d.data.length; i += 4){
+      const r = d.data[i], g = d.data[i+1], b = d.data[i+2];
+      if (r > 215 && g > 215 && b > 215) d.data[i+3] = 0;  // near-white → transparent
+    }
+    c.putImageData(d, 0, 0);
+    off._ready = true;
+  };
+  img.src = 'assets/ronin.jpg';
+  return off;
+})();
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 700;  // target visible world width; smaller screens zoom out
 const MAX_PROJ_RANGE = 400;   // projectiles die after this many world units from spawn — keeps shots on-screen
@@ -290,6 +314,7 @@ function resize(){
   cv.style.width = W + 'px'; cv.style.height = H + 'px';
   cv.width = Math.floor(W * DPR); cv.height = Math.floor(H * DPR);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.imageSmoothingEnabled = false;   // crisp pixels after resize
   // zoom out on narrow screens so visible world is at least DESIGN_W wide
   viewScale = Math.min(1, W / DESIGN_W);
   stickBase.cy = H - 72;  // park the joystick base above the bottom edge / home-bar
@@ -2648,29 +2673,26 @@ function drawPlayer(){
   // shadow
   ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0,P.r+4,P.r*0.9,4,0,0,TAU); ctx.fill();
   ctx.translate(0,bob);
-  // white gi (body)
-  ctx.fillStyle = P.hurt>0 ? '#ffb3ad' : '#eceae0';
-  ctx.beginPath(); ctx.moveTo(-P.r*0.7, P.r+2); ctx.lineTo(P.r*0.7, P.r+2);
-  ctx.lineTo(P.r*0.5,-P.r*0.2); ctx.lineTo(-P.r*0.5,-P.r*0.2); ctx.closePath(); ctx.fill();
-  // belt
-  ctx.fillStyle='#c0392b'; ctx.fillRect(-P.r*0.6, P.r*0.2, P.r*1.2, 3);
-  // head (dark skin)
-  ctx.fillStyle = P.hurt>0 ? '#ffd9d4' : '#6b4a37';
-  ctx.beginPath(); ctx.arc(0,-P.r*0.55, P.r*0.5, 0, TAU); ctx.fill();
-  // afro
-  ctx.fillStyle = '#16161c';
-  ctx.beginPath(); ctx.arc(0,-P.r*1.05, P.r*0.78, 0, TAU); ctx.fill();
-  ctx.beginPath(); ctx.arc(-P.r*0.5,-P.r*0.8, P.r*0.4,0,TAU);
-  ctx.arc(P.r*0.5,-P.r*0.8, P.r*0.4,0,TAU); ctx.fill();
-  // headband (white with red knot)
-  ctx.fillStyle='#f2efe6'; ctx.fillRect(-P.r*0.55,-P.r*0.7, P.r*1.1, 3);
-  ctx.fillStyle='#d8362b'; ctx.beginPath(); ctx.arc(face*P.r*0.5,-P.r*0.68,2.2,0,TAU); ctx.fill();
-  // sheathed look: draw katana along facing
-  ctx.rotate(lastAng);
-  ctx.strokeStyle='#cfd3da'; ctx.lineWidth=2.5;
-  ctx.beginPath(); ctx.moveTo(P.r*0.4,0); ctx.lineTo(P.r*1.4,0); ctx.stroke();
-  ctx.strokeStyle='#7a5b2a'; ctx.lineWidth=4;
-  ctx.beginPath(); ctx.moveTo(P.r*0.1,0); ctx.lineTo(P.r*0.4,0); ctx.stroke();
+  if (RONIN_SPRITE._ready){
+    // sprite is upright + faces forward; flip horizontally to match facing.
+    // Drawn ~2.4× the hit radius so the visual reads at a glance.
+    const w = P.r * 2.6, h = P.r * 2.6;
+    ctx.save();
+    ctx.scale(face, 1);
+    ctx.drawImage(RONIN_SPRITE, -w/2, -h*0.62, w, h);
+    if (P.hurt > 0){
+      // red flash overlay, clipped to the sprite's opaque pixels
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(255,80,80,0.55)';
+      ctx.fillRect(-w/2, -h*0.62, w, h);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+    ctx.restore();
+  } else {
+    // pre-load fallback: a simple dark blob so the player is visible
+    ctx.fillStyle = P.hurt>0 ? '#ffb3ad' : '#2c2a30';
+    ctx.beginPath(); ctx.arc(0, 0, P.r, 0, TAU); ctx.fill();
+  }
   ctx.restore();
 }
 
