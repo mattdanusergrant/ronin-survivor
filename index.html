@@ -947,9 +947,13 @@ function newGame(){
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:rand(-VW,VW*2), y:rand(-VH,VH*2), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // tiny seed crowd around the Dojo — the player should have a moment to
-  // orient themselves before the marcher streams start arriving from camps
-  for (let i=0;i<3;i++) spawnEnemy(false, rand(550, 850));
+  // the camps' marcher streams are already underway when the run starts —
+  // a column of footpads from every camp, strung along its road with the
+  // lead marchers closing on the Dojo from each direction
+  for (const b of game.buildings){
+    if (b.type === 'dojo' || b.shopGroup) continue;
+    for (let i=0;i<4;i++) spawnMarcherFromCamp(b, 520 + i*300 + rand(-60, 60));
+  }
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1007,30 +1011,62 @@ const ENEMY_TYPES = {
   brute:   { hp:120, speed:30, r:18, dmg:18, xp:5, color:'#4a2a44', tier:3, sight:170, callR:130, aggro:true  },
 };
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
-function spawnInterval(){ return Math.max(0.5, 1.5 - game.t * 0.005); }
-// Per fresh-camp stream cadence. Each fresh camp emits one footpad on this
-// interval. With ~5 active camps that's about one marcher every ~1.6s at
-// game start, halving by the late game as the interval drops to 4s.
-function campStreamInterval(){ return Math.max(4.0, 8.0 - game.t * 0.015); }
+// Spawn pressure no longer ramps with the clock — it ramps with conquest.
+// Every building the player has cleared (freed shop or beaten camp) raises
+// the world's hostility one notch; sitting still keeps the pace gentle.
+function clearedCount(){
+  if (!game || !game.buildings) return 0;
+  let n = 0;
+  for (const b of game.buildings) if (b.state === 'cleared') n++;
+  return n;
+}
+function spawnInterval(){ return Math.max(0.5, 2.6 - clearedCount() * 0.3); }
+// Per fresh-camp stream cadence. The surviving camps emit faster as the
+// player clears the others — the world reacts to losing ground.
+function campStreamInterval(){ return Math.max(3.5, 9.0 - clearedCount() * 0.8); }
 
-function spawnMarcherFromCamp(camp){
+// Walk backward from a route's end (the Dojo) by `dist` world units.
+// Returns the point plus the waypoint index a marcher placed there should
+// head for next.
+function pointAlongRouteFromEnd(route, dist){
+  let remain = dist;
+  for (let k=route.length-1; k>0; k--){
+    const a = route[k], b = route[k-1];
+    const L = Math.hypot(b.x-a.x, b.y-a.y) || 1;
+    if (remain <= L){
+      const t = remain / L;
+      return { x: a.x + (b.x-a.x)*t, y: a.y + (b.y-a.y)*t, idx: k };
+    }
+    remain -= L;
+  }
+  return { x: route[0].x, y: route[0].y, idx: 1 };
+}
+
+// alongDist (optional): place the marcher already mid-march, that many world
+// units short of the Dojo along the camp's carved route — used to pre-seed
+// the opening streams at run start.
+function spawnMarcherFromCamp(camp, alongDist=null){
   if (!game || !game.buildings) return;
   const dojo = game.buildings.find(b => b.type === 'dojo');
   if (!dojo) return;
   // emerge at the camp's perimeter so they look like they walked out of the door
   const ang = rand(0, TAU);
   const d   = camp.r + 10 + rand(0, 14);
+  let x = camp.x + Math.cos(ang)*d, y = camp.y + Math.sin(ang)*d, routeIdx = 0;
+  if (alongDist !== null && camp.route && camp.route.length){
+    const p = pointAlongRouteFromEnd(camp.route, alongDist);
+    x = p.x + rand(-24, 24); y = p.y + rand(-24, 24); routeIdx = p.idx;
+  }
   const t   = ENEMY_TYPES.footpad;
   const tm  = timeMul();
   enemies.push({
-    x: camp.x + Math.cos(ang)*d,
-    y: camp.y + Math.sin(ang)*d,
+    x, y,
     r: t.r, hp: t.hp * tm, maxhp: t.hp * tm,
     speed: t.speed * 0.55,
     dmg: t.dmg, xp: t.xp, color: t.color,
     hit: 0, boss: false, sep: 0,
     state: 'march', marchTo: dojo, fromCamp: camp,
-    route: camp.route || null, routeIdx: 0,   // waypoints along the carved path to the Dojo
+    route: camp.route || null, routeIdx,      // waypoints along the carved path to the Dojo
     sight: t.sight, callR: t.callR,
     wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
   });
