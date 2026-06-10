@@ -3717,6 +3717,21 @@ D('dojo-reset').onclick = ()=>{
   renderDojo();
 };
 refreshTitleRyo();
+// Dev hatch — `?expose=1` puts draw fns + state on window so the sample-image
+// generator (and any future asset tooling) can render single entities to the
+// canvas. Costs nothing when the flag isn't set.
+if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -1){
+  window.__art = {
+    ctx, cv, TAU, RONIN_SPRITE,
+    drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
+    drawSlot, drawStation, drawObstacle, drawShot, drawSpiritBlade,
+    newGame, startDojo,
+    get game(){return game}, set game(v){game=v},
+    get player(){return player}, set player(v){player=v},
+    get enemies(){return enemies},
+    get lastAng(){return lastAng}, set lastAng(v){lastAng=v},
+  };
+}
 </script>
 </body>
 </html>
