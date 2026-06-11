@@ -279,37 +279,16 @@
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;   // crisp pixels for sprite assets
-// Ronin sprite — JPEG with a black background. The figure also contains
-// black pixels (hair, outlines), so instead of keying every dark pixel we
-// flood-fill from the image edges and clear only the connected background.
+// Ronin sprite — indexed PNG with tRNS transparency; draw directly, no keying needed.
 const RONIN_SPRITE = (() => {
   const off = document.createElement('canvas');
   off._ready = false;
-  // In headless test envs createElement returns a bare stub; bail quietly.
   if (typeof off.getContext !== 'function' || typeof Image === 'undefined') return off;
   off.width = 32; off.height = 32;
   const c = off.getContext('2d');
   const img = new Image();
-  img.onload = () => {
-    c.drawImage(img, 0, 0, 32, 32);
-    const d = c.getImageData(0, 0, 32, 32);
-    const dark = p => d.data[p*4] < 48 && d.data[p*4+1] < 48 && d.data[p*4+2] < 48;
-    const seen = new Uint8Array(32*32), q = [];
-    for (let i = 0; i < 32; i++) q.push(i, 31*32 + i, i*32, i*32 + 31);
-    while (q.length){
-      const p = q.pop();
-      if (seen[p] || !dark(p)) continue;
-      seen[p] = 1; d.data[p*4+3] = 0;
-      const x = p & 31;
-      if (x > 0)  q.push(p-1);
-      if (x < 31) q.push(p+1);
-      if (p >= 32) q.push(p-32);
-      if (p < 31*32) q.push(p+32);
-    }
-    c.putImageData(d, 0, 0);
-    off._ready = true;
-  };
-  img.src = 'assets/ronin.jpg';
+  img.onload = () => { c.drawImage(img, 0, 0, 32, 32); off._ready = true; };
+  img.src = 'assets/ronin.png';
   return off;
 })();
 let W = 0, H = 0, DPR = 1, viewScale = 1;
