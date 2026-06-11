@@ -635,12 +635,10 @@ function campMayStream(b){
   return true;
 }
 
-// Headless soundness check on a freshly generated world: walk the chain,
-// flood-filling the walkable grid from the Dojo at each step — every zone
-// must be sealed until its predecessor falls and reachable right after.
-// Rare corridor jitter can merge two roads and breach a gate; the caller
-// rerolls the whole world when that happens.
-function worldIsSound(buildings, obstacles){
+// Flood-fill machinery shared by the soundness checks: a walkable-grid flood
+// from the Dojo with a mutable set of "simulated cleared" buildings whose
+// gates are treated as open.
+function makeFlood(obstacles){
   const R = MAZE.R, CELL = 44, N = Math.ceil(2*R/CELL);
   const grid = new Map();
   for (const o of obstacles){
@@ -696,6 +694,16 @@ function worldIsSound(buildings, obstacles){
     }
     return false;
   };
+  return { open, flood, reach };
+}
+
+// Headless soundness check on a freshly generated world: walk the chain,
+// flood-filling the walkable grid from the Dojo at each step — every zone
+// must be sealed until its predecessor falls and reachable right after.
+// Rare corridor jitter can merge two roads and breach a gate; the caller
+// rerolls the whole world when that happens.
+function worldIsSound(buildings, obstacles){
+  const { open, flood, reach } = makeFlood(obstacles);
   for (let step=1; step<buildings.length; step++){
     const seen = flood();
     if (!reach(seen, buildings[step])) return false;
@@ -704,6 +712,62 @@ function worldIsSound(buildings, obstacles){
     open.add(buildings[step]);
   }
   return true;
+}
+
+// Branching-aware variant for custom maps (the linear walk above assumes a
+// pure chain). Per building: reachable once all its ancestors are cleared,
+// and — the strong seal test — unreachable while its parent boss stands even
+// if every other gate in the world is down. Children of the Dojo are ungated
+// by design, so the seal test skips them.
+function customWorldIsSound(buildings, obstacles){
+  const { open, flood, reach } = makeFlood(obstacles);
+  for (const b of buildings){
+    if (!b.parent) continue;
+    open.clear();
+    for (let u = b.parent; u; u = u.parent) open.add(u);
+    if (!reach(flood(), b)) return false;
+    if (b.parent.type !== 'dojo'){
+      open.clear();
+      for (const o of buildings) if (o !== b && o !== b.parent) open.add(o);
+      if (reach(flood(), b)) return false;
+    }
+  }
+  return true;
+}
+
+// ---------- custom maps (built in mapbuilder.html) ----------
+// Played via index.html?map=custom; the spec travels through localStorage.
+// Spec: { version, name, buildings: [{type,x,y,parent,straight,hasReturn}] }
+// — buildings[0] is the Dojo (pinned to the origin), parent is an index into
+// the array and always precedes its children.
+const CUSTOM_MAP_KEY = 'ronin-custom-map';
+function loadCustomMapSpec(){
+  try {
+    const s = JSON.parse(localStorage.getItem(CUSTOM_MAP_KEY) || 'null');
+    if (!s || !Array.isArray(s.buildings) || s.buildings.length < 2) return null;
+    if (s.buildings[0].type !== 'dojo') return null;
+    for (let i=1; i<s.buildings.length; i++){
+      const e = s.buildings[i];
+      if (!BUILDING_TYPES[e.type] || e.type === 'dojo') return null;
+      if (!(e.parent >= 0 && e.parent < i)) return null;
+    }
+    return s;
+  } catch { return null; }
+}
+const CUSTOM_MAP = typeof location !== 'undefined' &&
+  new URLSearchParams(location.search).get('map') === 'custom' ? loadCustomMapSpec() : null;
+function buildingsFromSpec(spec){
+  const out = spec.buildings.map((e, i) =>
+    makeBuilding(e.type, i ? Math.round(e.x) : 0, i ? Math.round(e.y) : 0));
+  out[0].depth = 0;
+  for (let i=1; i<out.length; i++){
+    const e = spec.buildings[i], b = out[i];
+    b.parent = out[e.parent];
+    b.depth = b.parent.depth + 1;
+    if (e.straight) b.tutorial = true;     // tutorial flag ⇒ dead-straight road
+    if (e.hasReturn) b.hasReturn = true;
+  }
+  return out;
 }
 
 // Fill everything that isn't road or clearing with solid forest.
@@ -1066,14 +1130,17 @@ function newGame(){
   game.bossKills = 0;
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
-  // generate the spiral world; on the rare roll where corridor jitter
-  // breaches a gate seal, throw the whole world away and roll again
+  // generate the world (custom layout if one was loaded, else the procedural
+  // spiral); on the rare roll where corridor jitter breaches a gate seal,
+  // throw the whole world away and roll again — winding is random either way
   for (let attempt=0; attempt<6; attempt++){
-    game.buildings = generateBuildings();
-    game.paths     = generatePaths(game.buildings);   // spiral roads + marcher routes
+    game.buildings = CUSTOM_MAP ? buildingsFromSpec(CUSTOM_MAP) : generateBuildings();
+    game.paths     = generatePaths(game.buildings);   // roads + marcher routes
     game.obstacles = generateObstacles(game.buildings, game.paths);
     game.obstacles.push(...generateGates(game.buildings));
-    if (worldIsSound(game.buildings, game.obstacles)) break;
+    const sound = CUSTOM_MAP ? customWorldIsSound(game.buildings, game.obstacles)
+                             : worldIsSound(game.buildings, game.obstacles);
+    if (sound) break;
   }
   game.obGrid    = buildObstacleGrid(game.obstacles);
   game.campfires = [];   // campfires only appear where bandit camps fall
