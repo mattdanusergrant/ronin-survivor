@@ -25,7 +25,7 @@ move to dodge / herd enemies  →  weapons auto-hit  →  foes drop ki
    →  stronger build  →  bigger swarm  →  repeat until you fall (or the timer ends)
 ```
 
-A run takes place in a gated progression tree carved out of solid forest: the Dojo sits in a corner of the map, a single straight tutorial road leads to the first bandit camp, and the world immediately branches from there into deeper zones. Every zone-boss building barricades the roads to its children until it falls. Campfires (checkpoints) only appear where bandit camps are razed. The camera follows the player. No menus mid-run except the level-up draft (which pauses time).
+A run takes place in a gated spiral carved out of solid forest: the Dojo sits at the center of the map, a single straight tutorial road leads to the first bandit camp, and the chain of zones wraps outward around the Dojo from there. Every zone boss barricades the road onward until it falls. Mid and outer zones (3, 5, 7) also hide a gated return road straight home — clearing them opens a shortcut to the Dojo that doubles as a permanent enemy lane, streaming tougher marchers (ronin → ninja → brute by depth) at the Dojo for the rest of the run. Turrets are upgradeable with Ryo, so the Dojo's defenses can keep pace. Campfires (checkpoints) only appear where bandit camps are razed. The camera follows the player. No menus mid-run except the level-up draft (which pauses time).
 
 ---
 
