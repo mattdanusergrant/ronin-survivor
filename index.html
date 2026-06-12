@@ -3231,10 +3231,10 @@ function drawAuras(){
 }
 
 // Slash sprite orientation: sword.png is tip-right / handle-left, blade running
-// horizontally. SWORD_ROT aligns the blade with the swing's outward direction (0
-// for a tip-right sprite); SWORD_HANDLE pulls the grip back behind the hand
-// (fraction of blade length). Tune these two if the swing looks off.
-const SWORD_ROT = 0;
+// horizontally. SWORD_ROT angles the blade so the tip leads the swing (raised,
+// slicing along the arc rather than pointing straight out); SWORD_HANDLE pulls
+// the grip back behind the hand (fraction of blade length). Tune if it drifts.
+const SWORD_ROT = -Math.PI / 2;
 const SWORD_HANDLE = 0.12;
 function drawArc(b){
   const k = b.t / b.life;                 // 0..1
