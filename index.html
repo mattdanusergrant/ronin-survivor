@@ -279,18 +279,43 @@
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
 ctx.imageSmoothingEnabled = false;   // crisp pixels for sprite assets
-// Ronin sprite — indexed PNG with tRNS transparency; draw directly, no keying needed.
-const RONIN_SPRITE = (() => {
-  const off = document.createElement('canvas');
-  off._ready = false;
-  if (typeof off.getContext !== 'function' || typeof Image === 'undefined') return off;
-  off.width = 32; off.height = 32;
-  const c = off.getContext('2d');
-  const img = new Image();
-  img.onload = () => { c.drawImage(img, 0, 0, 32, 32); off._ready = true; };
-  img.src = 'assets/ronin.png';
-  return off;
+// ---------- sprite pipeline ----------
+// Drop finished pixel art into assets/sprites/ using the filenames below.
+// Each entry preloads into an offscreen canvas at its native size; until the
+// file exists the canvas stays _ready=false and the entity's draw site falls
+// back to the procedural art. To wire a new entity: add a line here, then guard
+// its draw site with `SPR.<key>._ready`. See assets/sprites/README.md for the
+// naming + size convention the artist follows.
+const SPRITE_MANIFEST = {
+  ronin:      { file: 'ronin.png',       size: 32 },  // player — wired (drawPlayer)
+  dojo:       { file: 'dojo.png',        size: 64 },
+  shop:       { file: 'shop.png',        size: 64 },
+  camp:       { file: 'camp.png',        size: 64 },
+  campfire:   { file: 'campfire.png',    size: 32 },
+  footpad:    { file: 'footpad.png',     size: 24 },
+  roninEnemy: { file: 'ronin-enemy.png', size: 28 },
+  brute:      { file: 'brute.png',       size: 36 },
+  boss:       { file: 'boss.png',        size: 48 },
+  kiOrb:      { file: 'ki-orb.png',      size: 24 },
+};
+const SPR = (() => {
+  const reg = {};
+  const canDraw = typeof document !== 'undefined' && typeof Image !== 'undefined';
+  for (const key in SPRITE_MANIFEST){
+    const { file, size } = SPRITE_MANIFEST[key];
+    const off = document.createElement('canvas');
+    off.width = size; off.height = size; off._ready = false;
+    reg[key] = off;
+    if (!canDraw || typeof off.getContext !== 'function') continue;
+    const c = off.getContext('2d');
+    const img = new Image();
+    // onload flips _ready; a missing file 404s into onerror and stays false → fallback.
+    img.onload = () => { c.drawImage(img, 0, 0, size, size); off._ready = true; };
+    img.src = 'assets/sprites/' + file;
+  }
+  return reg;
 })();
+const RONIN_SPRITE = SPR.ronin;  // player draw site reads RONIN_SPRITE._ready
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 700;  // target visible world width; smaller screens zoom out
 const MAX_PROJ_RANGE = 400;   // projectiles die after this many world units from spawn — keeps shots on-screen
