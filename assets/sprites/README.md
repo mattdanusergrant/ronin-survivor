@@ -24,6 +24,13 @@ entity, plus `prompts.md` for the house-style image prompts).
 | `brute` | `brute.png` | 36×36 | Tier-3 enemy (heavy) | **wired** |
 | `boss` | `boss.png` | 48×48 | Camp boss | **wired** |
 | `kiOrb` | `ki-orb.png` | 24×24 | Ki pickup orb | **wired** |
+| `sword` | `sword.png` | tall, e.g. 16×48 | Katana slash — sweeps along the attack arc | **wired** |
+
+**Sword orientation:** draw it **tip-up, handle at the bottom**, blade running
+vertically, transparent background. The game pivots it from the player's hand and
+sweeps the tip along the slash arc. If it ends up pointing the wrong way or the
+grip sits off, the swing is tuned by two constants in `index.html` (`SWORD_ROT`,
+`SWORD_HANDLE`) — flag it and it's a one-line fix.
 
 *Every entity is pre-wired: drop the correctly-named file and it appears in-game
 on next load, no code change. (The tier-2 `ninja` enemy has no sprite slot yet

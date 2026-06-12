@@ -305,6 +305,7 @@ const SPRITE_MANIFEST = {
   brute:      { file: 'brute.png',       size: 36 },  // wired (drawEnemy, by colour)
   boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },  // wired (drawOrb)
+  sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc) — tip-up, handle-bottom
 };
 const SPR = (() => {
   const reg = {};
@@ -315,10 +316,14 @@ const SPR = (() => {
     off.width = size; off.height = size; off._ready = false;
     reg[key] = off;
     if (!canDraw || typeof off.getContext !== 'function') continue;
-    const c = off.getContext('2d');
     const img = new Image();
-    // onload flips _ready; a missing file 404s into onerror and stays false → fallback.
-    img.onload = () => { c.drawImage(img, 0, 0, size, size); off._ready = true; };
+    // onload sizes the canvas to the art's NATIVE dimensions (preserving aspect
+    // for non-square sprites like the sword) and draws 1:1; draw sites scale it.
+    // A missing file 404s into onerror and leaves _ready false → procedural fallback.
+    img.onload = () => {
+      off.width = img.naturalWidth || size; off.height = img.naturalHeight || size;
+      off.getContext('2d').drawImage(img, 0, 0); off._ready = true;
+    };
     img.src = 'assets/sprites/' + file;
   }
   return reg;
@@ -3225,23 +3230,43 @@ function drawAuras(){
   }
 }
 
+// Slash sprite orientation: sword.png is assumed tip-up / handle-bottom, blade
+// running vertically. SWORD_ROT rotates "up" to point outward along the swing;
+// SWORD_HANDLE pulls the grip back toward the hand (fraction of blade length).
+const SWORD_ROT = Math.PI / 2;
+const SWORD_HANDLE = 0.18;
 function drawArc(b){
   const k = b.t / b.life;                 // 0..1
   const a0 = b.ang - b.arc/2, sweep = b.arc;
   const ox = (b.x !== undefined) ? b.x : player.x;
   const oy = (b.y !== undefined) ? b.y : player.y;
   const lwScale = b.lwScale || 1;
+  const le = a0 + sweep*Math.min(1,k*1.6);   // leading edge angle of the sweep
   ctx.save(); ctx.translate(ox, oy);
+  // glowing arc — the slash's motion trail (and the fallback when no sprite)
   ctx.globalAlpha = (1-k)*0.9;
   ctx.lineWidth = (4 + (1-k)*4) * lwScale;
   ctx.strokeStyle = b.color || '#ffffff';
   ctx.shadowColor = b.glow || '#d8362b';
   ctx.shadowBlur = b.glow ? 18 : 12;
-  ctx.beginPath(); ctx.arc(0,0,b.range, a0, a0 + sweep*Math.min(1,k*1.6)); ctx.stroke();
-  // bright leading edge
-  const le = a0 + sweep*Math.min(1,k*1.6);
-  ctx.fillStyle = b.color ? 'rgba(255,220,150,0.95)' : 'rgba(255,255,255,0.9)';
-  ctx.beginPath(); ctx.arc(Math.cos(le)*b.range, Math.sin(le)*b.range, 3.5*lwScale,0,TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(0,0,b.range, a0, le); ctx.stroke();
+  ctx.shadowBlur = 0;
+  // sword sprite sweeps along the leading edge, handle at the hand, tip at the arc
+  if (SPR.sword && SPR.sword._ready && b.kind === 'arc'){
+    const L = b.range * 1.05;                                  // blade length ≈ reach
+    const sw = L * (SPR.sword.width / SPR.sword.height);       // keep native aspect
+    ctx.save();
+    ctx.rotate(le + SWORD_ROT);
+    ctx.globalAlpha = Math.min(1, (1-k)*1.8);                  // hold then fade out
+    // draw "up" (toward -y) so tip reaches out to L; handle pulled back past pivot
+    ctx.drawImage(SPR.sword, -sw/2, -L, sw, L * (1 + SWORD_HANDLE));
+    ctx.restore();
+  } else {
+    // bright leading edge dot — the procedural slash's cutting point
+    ctx.globalAlpha = (1-k)*0.9;
+    ctx.fillStyle = b.color ? 'rgba(255,220,150,0.95)' : 'rgba(255,255,255,0.9)';
+    ctx.beginPath(); ctx.arc(Math.cos(le)*b.range, Math.sin(le)*b.range, 3.5*lwScale,0,TAU); ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -4306,7 +4331,7 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
   window.__art = {
     ctx, cv, TAU, RONIN_SPRITE,
     drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
-    drawSlot, drawStation, drawObstacle, drawShot, drawSpiritBlade,
+    drawSlot, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
     newGame, startDojo,
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
