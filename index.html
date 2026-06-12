@@ -45,6 +45,9 @@
   h1{font-size:34px; margin:0; letter-spacing:3px; color:var(--bone);
     text-shadow:0 2px 0 #000, 0 0 22px rgba(216,54,43,.5);}
   h1 .acc{color:var(--blood);}
+  /* Title logo (natural 150×100): 10× on desktop, 4× on mobile, viewport-capped. */
+  #title-logo{width:1500px; max-width:96vw; height:auto;}
+  @media (max-width:768px){ #title-logo{width:600px; max-width:92vw;} }
   .tag{font-size:12px; color:var(--gold); letter-spacing:3px; text-transform:uppercase; margin-top:-6px;}
   .lede{font-size:14px; color:var(--dim); max-width:420px; line-height:1.55;}
   .btn{pointer-events:auto; cursor:pointer; border:1px solid var(--blood); background:#1a0f0e;
@@ -172,7 +175,7 @@
     <img id="title-logo" src="assets/sprites/logo.png"
          onerror="this.style.display='none'"
          onload="document.getElementById('title-wordmark').style.display='none'"
-         style="max-width:min(420px,90vw); max-height:30vh; image-rendering:pixelated; object-fit:contain;">
+         style="image-rendering:pixelated; object-fit:contain;">
     <h1 id="title-wordmark">RONIN <span class="acc">SURVIVOR</span></h1>
     <div class="lede">A lone swordsman walks the road to <b style="color:var(--gold)">No.1</b>. The world wants the headband off his head. Stand your ground, sharpen your blade, and cut down everything that comes.</div>
     <div class="btn" id="startbtn">🏯 ENTER THE DOJO</div>
