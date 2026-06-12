@@ -22,7 +22,7 @@ entity, plus `prompts.md` for the house-style image prompts).
 | `footpad` | `footpad.png` | 24×24 | Tier-0 enemy (basic bandit) | placeholder |
 | `roninEnemy` | `ronin-enemy.png` | 28×28 | Tier-1 enemy (fallen ronin) | placeholder |
 | `brute` | `brute.png` | 36×36 | Tier-3 enemy (heavy) | placeholder |
-| `boss` | `boss.png` | 48×48 | Camp boss | placeholder |
+| `boss` | `boss.png` | 48×48 | Camp boss | **wired** |
 | `kiOrb` | `ki-orb.png` | 24×24 | Ki pickup orb | placeholder |
 
 ## Rules for the artist

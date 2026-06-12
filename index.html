@@ -302,7 +302,7 @@ const SPRITE_MANIFEST = {
   footpad:    { file: 'footpad.png',     size: 24 },
   roninEnemy: { file: 'ronin-enemy.png', size: 28 },
   brute:      { file: 'brute.png',       size: 36 },
-  boss:       { file: 'boss.png',        size: 48 },
+  boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },
 };
 const SPR = (() => {
@@ -2999,16 +2999,28 @@ function drawEnemy(e){
     ctx.beginPath(); ctx.arc(0, 0, e.r*1.6, 0, TAU); ctx.fill();
     ctx.shadowBlur = 0;
   }
-  // body
-  ctx.fillStyle = flash ? '#ffffff' : (charging ? '#7a5a26' : e.color);
-  ctx.beginPath(); ctx.arc(0,2,e.r,0,TAU); ctx.fill();
-  // head
-  ctx.beginPath(); ctx.arc(0,-e.r*0.7, e.r*0.55, 0, TAU); ctx.fill();
-  // eyes (red glow; gold while charging)
-  if (!flash){
-    ctx.fillStyle = e.boss ? '#ffd24a' : (charging ? '#ffd24a' : '#e3342f');
-    ctx.beginPath(); ctx.arc(-e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU);
-    ctx.arc(e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU); ctx.fill();
+  // body — artist sprite for bosses when delivered, else procedural
+  if (e.boss && SPR.boss._ready){
+    const w = e.r * 2.6, h = e.r * 2.6;
+    ctx.drawImage(SPR.boss, -w/2, -h*0.5, w, h);
+    if (flash){
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(255,255,255,0.75)';
+      ctx.fillRect(-w/2, -h*0.5, w, h);
+      ctx.restore();
+    }
+  } else {
+    ctx.fillStyle = flash ? '#ffffff' : (charging ? '#7a5a26' : e.color);
+    ctx.beginPath(); ctx.arc(0,2,e.r,0,TAU); ctx.fill();
+    // head
+    ctx.beginPath(); ctx.arc(0,-e.r*0.7, e.r*0.55, 0, TAU); ctx.fill();
+    // eyes (red glow; gold while charging)
+    if (!flash){
+      ctx.fillStyle = e.boss ? '#ffd24a' : (charging ? '#ffd24a' : '#e3342f');
+      ctx.beginPath(); ctx.arc(-e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU);
+      ctx.arc(e.r*0.2,-e.r*0.75,e.r*0.12,0,TAU); ctx.fill();
+    }
   }
   // alert indicator
   if (e.state === 'alert'){
