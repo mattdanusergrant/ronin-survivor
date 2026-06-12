@@ -3230,11 +3230,12 @@ function drawAuras(){
   }
 }
 
-// Slash sprite orientation: sword.png is assumed tip-up / handle-bottom, blade
-// running vertically. SWORD_ROT rotates "up" to point outward along the swing;
-// SWORD_HANDLE pulls the grip back toward the hand (fraction of blade length).
-const SWORD_ROT = Math.PI / 2;
-const SWORD_HANDLE = 0.18;
+// Slash sprite orientation: sword.png is tip-right / handle-left, blade running
+// horizontally. SWORD_ROT aligns the blade with the swing's outward direction (0
+// for a tip-right sprite); SWORD_HANDLE pulls the grip back behind the hand
+// (fraction of blade length). Tune these two if the swing looks off.
+const SWORD_ROT = 0;
+const SWORD_HANDLE = 0.12;
 function drawArc(b){
   const k = b.t / b.life;                 // 0..1
   const a0 = b.ang - b.arc/2, sweep = b.arc;
@@ -3253,13 +3254,13 @@ function drawArc(b){
   ctx.shadowBlur = 0;
   // sword sprite sweeps along the leading edge, handle at the hand, tip at the arc
   if (SPR.sword && SPR.sword._ready && b.kind === 'arc'){
-    const L = b.range * 1.05;                                  // blade length ≈ reach
-    const sw = L * (SPR.sword.width / SPR.sword.height);       // keep native aspect
+    const L  = b.range * 1.15;                                 // tip reaches the arc
+    const sh = L * (SPR.sword.height / SPR.sword.width);       // keep native aspect
     ctx.save();
     ctx.rotate(le + SWORD_ROT);
     ctx.globalAlpha = Math.min(1, (1-k)*1.8);                  // hold then fade out
-    // draw "up" (toward -y) so tip reaches out to L; handle pulled back past pivot
-    ctx.drawImage(SPR.sword, -sw/2, -L, sw, L * (1 + SWORD_HANDLE));
+    // tip-right sprite: blade runs along +x to L; grip pulled back behind the hand
+    ctx.drawImage(SPR.sword, -L*SWORD_HANDLE, -sh/2, L*(1+SWORD_HANDLE), sh);
     ctx.restore();
   } else {
     // bright leading edge dot — the procedural slash's cutting point
