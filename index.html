@@ -3231,10 +3231,12 @@ function drawAuras(){
 }
 
 // Slash sprite orientation: sword.png is tip-right / handle-left, blade running
-// horizontally. SWORD_ROT angles the blade so the tip leads the swing (raised,
-// slicing along the arc rather than pointing straight out); SWORD_HANDLE pulls
-// the grip back behind the hand (fraction of blade length). Tune if it drifts.
-const SWORD_ROT = -Math.PI / 2;
+// horizontally. The blade is laid radially from the hand so its tip rides the
+// arc's leading edge (sweeping in step with the VFX). SWORD_ROT offsets that
+// angle; SWORD_FLIP mirrors the blade vertically so the katana's curved edge
+// faces into the cut; SWORD_HANDLE pulls the grip back behind the hand.
+const SWORD_ROT = 0;
+const SWORD_FLIP = true;
 const SWORD_HANDLE = 0.12;
 function drawArc(b){
   const k = b.t / b.life;                 // 0..1
@@ -3258,6 +3260,7 @@ function drawArc(b){
     const sh = L * (SPR.sword.height / SPR.sword.width);       // keep native aspect
     ctx.save();
     ctx.rotate(le + SWORD_ROT);
+    if (SWORD_FLIP) ctx.scale(1, -1);                          // mirror edge into the cut
     ctx.globalAlpha = Math.min(1, (1-k)*1.8);                  // hold then fade out
     // tip-right sprite: blade runs along +x to L; grip pulled back behind the hand
     ctx.drawImage(SPR.sword, -L*SWORD_HANDLE, -sh/2, L*(1+SWORD_HANDLE), sh);
