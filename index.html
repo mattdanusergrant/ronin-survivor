@@ -169,7 +169,11 @@
 
   <!-- Title -->
   <div id="title" class="overlay">
-    <h1>RONIN <span class="acc">SURVIVOR</span></h1>
+    <img id="title-logo" src="assets/sprites/logo.png"
+         onerror="this.style.display='none'"
+         onload="document.getElementById('title-wordmark').style.display='none'"
+         style="max-width:min(420px,90vw); max-height:30vh; image-rendering:pixelated; object-fit:contain;">
+    <h1 id="title-wordmark">RONIN <span class="acc">SURVIVOR</span></h1>
     <div class="lede">A lone swordsman walks the road to <b style="color:var(--gold)">No.1</b>. The world wants the headband off his head. Stand your ground, sharpen your blade, and cut down everything that comes.</div>
     <div class="btn" id="startbtn">🏯 ENTER THE DOJO</div>
     <div id="title-ryo" class="ryoline">🪙 <b>0</b> Ryo</div>
@@ -288,6 +292,7 @@ ctx.imageSmoothingEnabled = false;   // crisp pixels for sprite assets
 // naming + size convention the artist follows.
 const SPRITE_MANIFEST = {
   ronin:      { file: 'ronin.png',       size: 32 },  // player — wired (drawPlayer)
+  // logo is an <img> tag, not a canvas sprite — see #title-logo in the HTML
   dojo:       { file: 'dojo.png',        size: 64 },
   shop:       { file: 'shop.png',        size: 64 },
   camp:       { file: 'camp.png',        size: 64 },

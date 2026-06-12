@@ -13,6 +13,7 @@ entity, plus `prompts.md` for the house-style image prompts).
 
 | Key (in game) | Filename | Native size | Entity | Status |
 |---|---|---|---|---|
+| — | `logo.png` | any (≤420px wide) | Title screen logo — replaces text wordmark | **wired** |
 | `ronin` | `ronin.png` | 32×32 | Player — wandering swordsman | **wired** |
 | `dojo` | `dojo.png` | 64×64 | The Dojo — central hub | placeholder |
 | `shop` | `shop.png` | 64×64 | Rescued shop (smithy / vigor / spirit) | placeholder |
