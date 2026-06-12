@@ -15,15 +15,19 @@ entity, plus `prompts.md` for the house-style image prompts).
 |---|---|---|---|---|
 | — | `logo.png` | any (≤420px wide) | Title screen logo — replaces text wordmark | **wired** |
 | `ronin` | `ronin.png` | 32×32 | Player — wandering swordsman | **wired** |
-| `dojo` | `dojo.png` | 64×64 | The Dojo — central hub | placeholder |
-| `shop` | `shop.png` | 64×64 | Rescued shop (smithy / vigor / spirit) | placeholder |
-| `camp` | `camp.png` | 64×64 | Bandit camp (uncleared) | placeholder |
-| `campfire` | `campfire.png` | 32×32 | Checkpoint campfire | placeholder |
-| `footpad` | `footpad.png` | 24×24 | Tier-0 enemy (basic bandit) | placeholder |
-| `roninEnemy` | `ronin-enemy.png` | 28×28 | Tier-1 enemy (fallen ronin) | placeholder |
-| `brute` | `brute.png` | 36×36 | Tier-3 enemy (heavy) | placeholder |
+| `dojo` | `dojo.png` | 64×64 | The Dojo — central hub | **wired** |
+| `shop` | `shop.png` | 64×64 | Rescued shop (smithy / vigor / spirit) | **wired** |
+| `camp` | `camp.png` | 64×64 | Bandit camp (uncleared) | **wired** |
+| `campfire` | `campfire.png` | 32×32 | Checkpoint campfire | **wired** |
+| `footpad` | `footpad.png` | 24×24 | Tier-0 enemy (basic bandit) | **wired** |
+| `roninEnemy` | `ronin-enemy.png` | 28×28 | Tier-1 enemy (fallen ronin) | **wired** |
+| `brute` | `brute.png` | 36×36 | Tier-3 enemy (heavy) | **wired** |
 | `boss` | `boss.png` | 48×48 | Camp boss | **wired** |
-| `kiOrb` | `ki-orb.png` | 24×24 | Ki pickup orb | placeholder |
+| `kiOrb` | `ki-orb.png` | 24×24 | Ki pickup orb | **wired** |
+
+*Every entity is pre-wired: drop the correctly-named file and it appears in-game
+on next load, no code change. (The tier-2 `ninja` enemy has no sprite slot yet
+and stays procedural.)*
 
 ## Rules for the artist
 
@@ -51,8 +55,14 @@ if (SPR.campfire._ready) ctx.drawImage(SPR.campfire, x - w/2, y - h/2, w, h);
 else { /* existing procedural campfire */ }
 ```
 
-The player (`drawPlayer`, reading `RONIN_SPRITE._ready`) is the worked example.
-Wire the rest as art lands so each guess at scale/anchor is checked against the
-real sprite instead of made blind.
+Every draw site is already guarded this way, so nothing else needs touching to
+add the listed sprites — just drop the files. The scale/anchor for each is a
+first-pass guess (sprite drawn at ~2.6× the entity's hit radius, buildings
+anchored to sit upright); once real art lands, tweak the per-entity `w/h` and
+anchor in its draw function if it sits high or low.
+
+Draw sites by entity: player → `drawPlayer`; dojo/shop/camp → `drawBuilding`;
+campfire → `drawCampfire`; footpad/ronin/brute/boss → `drawEnemy`; ki orb →
+`drawOrb`. Enemies are matched to sprites by tier colour via `COLOR_TO_SPRITE`.
 
 #LLM-generated
