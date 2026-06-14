@@ -305,7 +305,7 @@ const SPRITE_MANIFEST = {
   brute:      { file: 'brute.png',       size: 36 },  // wired (drawEnemy, by colour)
   boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },  // wired (drawOrb)
-  sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc) — tip-up, handle-bottom
+  sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc); tip-right, non-square art (canvas resizes to native on load)
 };
 const SPR = (() => {
   const reg = {};
@@ -512,6 +512,9 @@ function distToSeg(px, py, s){
 // building can swing two corridors together and break a gate's seal.
 function windPath(ax, ay, bx, by){
   const len = Math.hypot(bx-ax, by-ay);
+  // Coincident/near-coincident endpoints (possible from a hand-authored custom
+  // map) would make ux/uy NaN and poison every downstream path/gate/flood check.
+  if (len < 1e-3) return [{x:ax, y:ay}, {x:bx, y:by}];
   const ux = (bx-ax)/len, uy = (by-ay)/len, nx = -uy, ny = ux;
   const stub = Math.min(550, len*0.3);
   const pts = [{x:ax, y:ay}, {x:ax+ux*stub, y:ay+uy*stub}];
@@ -788,6 +791,11 @@ function loadCustomMapSpec(){
       const e = s.buildings[i];
       if (!BUILDING_TYPES[e.type] || e.type === 'dojo') return null;
       if (!(e.parent >= 0 && e.parent < i)) return null;
+      if (!isFinite(e.x) || !isFinite(e.y)) return null;
+      // reject a building sitting on top of its parent — a zero-length road has
+      // no direction and can't be gated or flooded (would degenerate worldgen)
+      const par = s.buildings[e.parent];
+      if (Math.hypot(e.x - par.x, e.y - par.y) < 40) return null;
     }
     return s;
   } catch { return null; }
@@ -977,7 +985,9 @@ const META = (function(){
   const defaults = { ryo:0, up:{}, runs:0, bestTime:0, bestLevel:0, totalKills:0, totalRyo:0 };
   try {
     const m = Object.assign(defaults, JSON.parse(localStorage.getItem(META_KEY) || '{}'));
-    m.up = m.up || {};
+    m.up = (m.up && typeof m.up === 'object') ? m.up : {};
+    // coerce numeric fields so a tampered/partial save can't poison runs with NaN
+    for (const k of ['ryo','runs','bestTime','bestLevel','totalKills','totalRyo']) m[k] = +m[k] || 0;
     return m;
   } catch { return defaults; }
 })();
@@ -1490,7 +1500,7 @@ function applyReward(kind){
 function damage(e, dmg, kx=0, ky=0){
   if (e.dummy && (e.respawnT > 0 || e.hp <= 0)) return;  // can't hit a downed dummy
   e.hp -= dmg; e.hit = 0.12;
-  if (kx||ky && !e.dummy){ const l=Math.hypot(kx,ky)||1; e.x += kx/l*6; e.y += ky/l*6; }
+  if ((kx||ky) && !e.dummy){ const l=Math.hypot(kx,ky)||1; e.x += kx/l*6; e.y += ky/l*6; }
   fx.push({ kind:'dmg', x:e.x, y:e.y-e.r-4, v:Math.round(dmg), t:0, life:.6, vy:-26 });
   if (e.hp <= 0){
     if (e.dummy){
@@ -1601,6 +1611,9 @@ function fireWeapons(dt){
       node.a += s.speed * dt;
       const ox = P.x + Math.cos(node.a)*s.radius, oy = P.y + Math.sin(node.a)*s.radius;
       node.x = ox; node.y = oy;
+      // prune lapsed per-enemy hit cooldowns so node.hit can't grow unbounded
+      // (dead enemies' ids would otherwise linger forever across a long run)
+      for (const id in node.hit){ if (node.hit[id] <= game.t) delete node.hit[id]; }
       for (const e of enemies){
         if (node.hit[e._id] && node.hit[e._id] > game.t) continue;
         if (Math.hypot(e.x-ox, e.y-oy) < e.r + 10){
@@ -1812,7 +1825,8 @@ function fireWeapons(dt){
 let _eid = 1;
 function nearest(n){
   const P = player;
-  return enemies.slice().sort((a,b)=>
+  // skip foes already killed earlier this frame (removed only at end of update)
+  return enemies.filter(e=>!e.dead).sort((a,b)=>
     (Math.hypot(a.x-P.x,a.y-P.y)) - (Math.hypot(b.x-P.x,b.y-P.y))).slice(0,n);
 }
 // Range-gate helpers. Every weapon refuses to fire when nothing's in reach —

@@ -29,7 +29,7 @@ A run takes place in a gated world carved out of solid forest: the Dojo sits at 
 
 ---
 
-## Prototype scope (what is built — `web/index.html`)
+## Prototype scope (what is built — `index.html`)
 
 Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait first. Built to this DoD — **all verified headlessly** (node syntax check + DOM-stubbed sim: spawn/kite/level-up/all-four-weapons/boss/render all pass):
 
@@ -48,8 +48,11 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
 - **Juice:** hit-flash, knockback, damage numbers, death sparks, screen-shake, i-frames + hurt-flash, drifting petals, red-sun vignette, grid ground.
 - **Flow:** title → play → pause (resume/abandon) → game-over with run stats (time survived, felled, level) + restart.
 
+### Now in the prototype beyond the VS core
+- **Meta-progression:** Ryo currency earned per run, spent on permanent upgrades + Dojo turret levels, persisted in `localStorage` (`ronin-meta-v1`); a walkable Dojo hub with training dummies and stations; mini-games (Samurai Soccer, Samurai Volley); a gated spiral world with boss seals, campfire checkpoints, and return-road enemy lanes; a sprite-art pipeline and a custom-map editor (`mapbuilder.html`).
+
 ### Deliberately NOT in the prototype (next-up)
-- Meta-progression (persistent unlocks / gold between runs), audio/music, more weapons & evolutions (VS-style weapon+passive fusions), multiple characters, stage variety, a true win condition / time cap, save/persistence, settings.
+- Audio/music, more weapons & evolutions (VS-style weapon+passive fusions), multiple characters, stage variety, a true win condition / time cap, settings.
 
 ---
 
@@ -67,7 +70,8 @@ These are *feel-tunable knobs*, not committed design. First playtest goal: confi
 ## Tech
 
 - **Web-first**, single `index.html`, zero dependencies/build (matches Sigil Tactics & tcg-pack-clicker). Runs by opening the file or via any static host.
-- Fixed-ish timestep via rAF with a dt clamp; world-space + camera; Canvas 2D draws all art procedurally (no image assets — keeps it self-contained and dodges the asset-library gitignore).
+- Fixed-ish timestep via rAF with a dt clamp; world-space + camera; Canvas 2D.
+- **Art pipeline:** entities draw from pixel-art PNGs in `assets/sprites/` when present, falling back to procedural Canvas drawing when a sprite is absent — so the game stays playable at every stage of art delivery and the file is self-contained even with zero sprites. Sprites are committed to this public repo (they must ship to be served); a non-square sprite (e.g. the sword) keeps its native aspect. Companion tool `mapbuilder.html` authors custom worlds. See `assets/sprites/README.md`.
 
 ---
 
@@ -75,7 +79,7 @@ These are *feel-tunable knobs*, not committed design. First playtest goal: confi
 
 1. **Title.** *Ronin Survivor* is a placeholder. Keep it, or pick another legally-distinct name? (Direct "Afro Samurai" naming is a trademark risk if ever shared publicly.)
 2. **Win condition.** Endless-until-death (current), or a survive-to-N-minutes victory + boss finale (classic VS)?
-3. **Meta-progression.** Add persistent between-run upgrades (gold → permanent stat boosts / unlocks)? This is what gives VS-likes their retention.
+3. **Meta-progression.** A first pass exists (Ryo → permanent upgrades + turret levels, persisted between runs). Open question is now *depth*: how far to extend the upgrade tree / unlock system to carry long-term retention.
 4. **Audio.** Lo-fi/hip-hop-samurai loop + SFX — generate procedurally (WebAudio) to stay asset-free, or source licensed tracks?
 5. **Characters.** One swordsman, or multiple with different starting weapons/stats?
 6. **Evolutions.** Add VS-style weapon+passive fusion ultimates (the depth hook)?
