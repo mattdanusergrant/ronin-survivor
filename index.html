@@ -192,8 +192,8 @@
 
   <!-- Level up -->
   <div id="levelup" class="overlay hidden">
-    <div class="tag">Level Up</div>
-    <h1 style="font-size:24px">CHOOSE A BOON</h1>
+    <div class="tag" id="lv-tag">Level Up</div>
+    <h1 id="lv-ttl" style="font-size:24px">CHOOSE A BOON</h1>
     <div id="cards"></div>
   </div>
 
@@ -382,6 +382,7 @@ const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 // separate buildings; the Dojo is now purely the hub for Pit, mini-games,
 // and the gate. Repacked the layout to fill the freed vertical space.
 const DOJO_STATIONS = [
+  { id:'shop',   name:'Ryo Trader',     ico:'🪙', x:   0, y:-300, r:38, kind:'shop' },
   { id:'forge',  name:'Spirit Forge',   ico:'⚒️', x:-180, y:   0, r:38, kind:'forge' },
   { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 340, r:42, kind:'run' },
 ];
@@ -439,17 +440,17 @@ const BUILDING_TYPES = {
   dojo:    { name:'The Dojo',         ico:'🏯', tag:'enter',   color:'#7a5b2a', repeatable:true },
   bandits: { name:'Bandit Camp',      ico:'🏚️', tag:'+50 Ryo', color:'#5a3530', reward:'ryo',
              boss: { name:'Bandit Chief',     hp:340, speed:54, dmg:18, r:24, xp:40 } },
-  shrine:  { name:'Forgotten Shrine', ico:'⛩️', tag:'Heal',    color:'#2a8f97', reward:'heal',
+  shrine:  { name:'Forgotten Shrine', ico:'⛩️', tag:'Blessing', color:'#2a8f97', reward:'heal',
              boss: { name:'Shrine Guardian',  hp:460, speed:36, dmg:24, r:28, xp:48 } },
-  cache:   { name:"Ronin's Cache",    ico:'📦', tag:'+15% DMG',color:'#e7b53b', reward:'buff',
+  cache:   { name:"Ronin's Cache",    ico:'📦', tag:'Arsenal',  color:'#e7b53b', reward:'buff',
              boss: { name:'Cache Sentinel',   hp:400, speed:46, dmg:22, r:25, xp:44 } },
-  // Shop buildings — captured by bosses; freeing the building unlocks the
-  // matching upgrade store at its door.
-  smithy:  { name:'Smithy',         ico:'🗡️', tag:'Combat shop',  color:'#b58a3a', shopGroup:'combat',
+  // Altar buildings — captured by bosses; clearing one grants a build-defining
+  // run-scoped boon draft (a "dark bargain") instead of opening a store.
+  smithy:  { name:'Smithy',         ico:'🗡️', tag:'Combat altar',  color:'#b58a3a', shopGroup:'combat',
              boss: { name:'Captured Smith',  hp:380, speed:52, dmg:20, r:26, xp:46 } },
-  vigor:   { name:'Hall of Vigor',  ico:'🛡️', tag:'Defense shop', color:'#5a7a9a', shopGroup:'defense',
+  vigor:   { name:'Hall of Vigor',  ico:'🛡️', tag:'Defense altar', color:'#5a7a9a', shopGroup:'defense',
              boss: { name:'The Defiler',     hp:520, speed:34, dmg:26, r:30, xp:50 } },
-  spirit:  { name:'Spirit Pool',    ico:'⚡', tag:'Utility shop', color:'#4fa098', shopGroup:'utility',
+  spirit:  { name:'Spirit Pool',    ico:'⚡', tag:'Utility altar', color:'#4fa098', shopGroup:'utility',
              boss: { name:'The Trickster',   hp:340, speed:62, dmg:18, r:24, xp:42 } },
 };
 // The world is a gated spiral. The Dojo sits at the center of the map; a
@@ -462,7 +463,10 @@ function generateBuildings(){
   const dojo = makeBuilding('dojo', 0, 0);
   dojo.depth = 0;
   const out = [dojo];
-  const order = ['bandits','smithy','bandits','shrine','vigor','cache','bandits','spirit'];
+  // Zone 1 is always the tutorial bandit camp; the rest is a shuffled mix that
+  // guarantees all five special buildings appear (plus two more camps), so the
+  // sequence of zone rewards differs every run.
+  const order = ['bandits', ...shuffle(['shrine','cache','smithy','vigor','spirit','bandits','bandits'])];
   const returnAt = new Set([3, 5, 7]);     // chain indices that earn a road home
   let th = rand(0, TAU), parent = dojo;
   for (let i=1; i<=order.length; i++){
@@ -1568,12 +1572,16 @@ function checkCampCleared(b){
         for (let i=0;i<3;i++) spawnMarcherFromCamp(c);
       }
     }
+    // special buildings hand you a run-scoped boon DRAFT on clear (you're right
+    // there, fresh off the boss fight); only bandit camps drop a Ryo orb.
     if (b.shopGroup){
-      // shop building: free the structure — its door becomes interactable so
-      // you can open its upgrade store (handled via state === 'cleared').
-    } else if (b.reward){
-      // camp: drop the reward orb at the door
-      orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:b.reward });
+      openBuildingDraft(ALTAR_BY_GROUP[b.shopGroup], b);
+    } else if (b.type === 'shrine'){
+      openBuildingDraft('blessing', b);
+    } else if (b.type === 'cache'){
+      openBuildingDraft('arsenal', b);
+    } else if (b.reward === 'ryo'){
+      orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:'ryo' });
     }
     for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,260);
       fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,1.0), c:'#e7b53b' }); }
@@ -1636,6 +1644,7 @@ function damage(e, dmg, kx=0, ky=0){
 }
 function killEnemy(e){
   e.dead = true; game.kills++;
+  if (player.lifesteal) player.hp = Math.min(player.maxhp, player.hp + player.lifesteal);  // Bloodpact boon
   if (e.boss) game.bossKills = (game.bossKills||0) + 1;
   if (e.boss) shake = Math.max(shake, 10);
   // ki orbs (boss bursts several)
@@ -2433,9 +2442,9 @@ function updateDojoStations(){
     for (const s of DOJO_STATIONS) candidates.push(s);
   } else if (game.buildings){
     for (const b of game.buildings){
-      // Dojo is interactable (subject to lock); SAVED shop buildings are too
+      // only the Dojo is interactable in a run now — special buildings hand out
+      // their boon draft on clear, so cleared shops are just landmarks
       if (b.type === 'dojo') candidates.push(b);
-      else if (b.shopGroup && b.state === 'cleared') candidates.push(b);
     }
     // campfires — rest + spend Ki for upgrades
     if (game.campfires) for (const c of game.campfires){
@@ -2458,8 +2467,9 @@ function updateDojoStations(){
       let label;
       if (near.kind === 'building'){
         if (near.type === 'dojo') label = 'ENTER — ' + near.name;
-        else if (near.shopGroup) label = 'ENTER — ' + near.name;
         else label = 'APPROACH — ' + near.name;   // unreachable in practice
+      } else if (near.kind === 'shop'){
+        label = 'SHOP — ' + near.name;
       } else if (near.kind === 'forge' || near.kind === 'campfire'){
         const cost = game.xpNext;
         const prefix = near.kind === 'forge' ? 'FORGE' : 'REST + FORGE';
@@ -2507,8 +2517,8 @@ function dojoActivate(){
   if (s.kind === 'exit') { leaveDojo(); return; }
   if (s.kind === 'building'){
     if (s.type === 'dojo') enterDojoFromRun();
-    else if (s.shopGroup && s.state === 'cleared') openDojoShop(s.shopGroup);
-    // camps & uncleared shops never require interaction — boss spawns on approach
+    // camps & shops never require interaction — boss spawns on approach,
+    // and special buildings grant their boon draft on clear
     return;
   }
 }
@@ -2586,6 +2596,8 @@ function buildMinimalOptions(){
 }
 function openLevelUp(){
   game.state = STATE.LEVELUP;
+  D('lv-tag').textContent = 'Level Up';
+  D('lv-ttl').textContent = 'CHOOSE A BOON';
   const opts = (SETTINGS.upgradeMode === 'minimal') ? buildMinimalOptions() : buildOptions();
   elCards.innerHTML = '';
   for (const o of opts){
@@ -2621,6 +2633,87 @@ function applyOption(o){
   applyUpgrade(o);
   game.state = STATE.PLAY;
   showOnly(null);
+}
+
+// =====================================================================
+//  SPECIAL-BUILDING BOON DRAFTS — run-scoped picks granted on a zone clear.
+//  Shrine = defensive blessing · Cache = offensive arsenal · the ex-shops =
+//  build-defining "altars" with a tradeoff. All apply to the LIVE player only
+//  (permanent Ryo upgrades live solely at the Dojo now).
+// =====================================================================
+function bumpBestWeapon(p){
+  let best = null, bl = -1;
+  for (const id in p.weapons){ const lv = p.weapons[id]||0; if (lv>0 && lv<WEAPONS[id].max && lv>bl){ bl=lv; best=id; } }
+  if (best){ p.weapons[best]++; if (best==='orbit') rebuildOrbit(); }
+  else grantNewWeapon(p);
+}
+function grantNewWeapon(p){
+  const missing = [];
+  for (const id in WEAPONS){ if (!(p.weapons[id] > 0)) missing.push(id); }
+  if (missing.length){ const id = pick(missing); p.weapons[id] = 1; if (id==='orbit') rebuildOrbit(); return; }
+  const up = [];
+  for (const id in WEAPONS){ if ((p.weapons[id]||0) < WEAPONS[id].max) up.push(id); }
+  if (up.length){ const id = pick(up); p.weapons[id]++; if (id==='orbit') rebuildOrbit(); }
+}
+const BUILDING_BOONS = {
+  blessing: [   // Forgotten Shrine — also heals to full on arrival
+    { ico:'❤️', nm:'Ironheart',  ds:'+30% max HP (healed to full)',  apply:p=>{ p.maxhp=Math.round(p.maxhp*1.3); p.hp=p.maxhp; } },
+    { ico:'🛡️', nm:'Bulwark',    ds:'−18% damage taken · +1 HP/sec', apply:p=>{ p.armor=Math.min(0.7,(p.armor||0)+0.18); p.regen+=1; } },
+    { ico:'🩸', nm:'Bloodpact',  ds:'Heal 2 HP on every kill',       apply:p=>{ p.lifesteal=(p.lifesteal||0)+2; } },
+    { ico:'💀', nm:'Last Stand', ds:'+1 revive this run (50% HP)',   apply:p=>{ p.revives=(p.revives||0)+1; } },
+  ],
+  arsenal: [    // Ronin's Cache
+    { ico:'⚔️', nm:'Temper',    ds:'+1 level to your strongest weapon', apply:p=>bumpBestWeapon(p) },
+    { ico:'🌟', nm:'New Blade', ds:"Gain a weapon you don't carry",     apply:p=>grantNewWeapon(p) },
+    { ico:'🔥', nm:'Bloodlust', ds:'+25% all damage',                   apply:p=>{ p.power*=1.25; } },
+    { ico:'🎯', nm:'Deadeye',   ds:'+18% damage · −10% cooldowns',      apply:p=>{ p.power*=1.18; p.haste*=0.9; } },
+  ],
+  'altar-combat': [   // Smithy — power for risk
+    { ico:'🔥', nm:"Berserker's Pact", ds:'+50% damage · −20% max HP',          apply:p=>{ p.power*=1.5; p.maxhp=Math.round(p.maxhp*0.8); p.hp=Math.min(p.hp,p.maxhp); } },
+    { ico:'⚡', nm:'Frenzy',           ds:'−22% cooldowns · +20% damage taken', apply:p=>{ p.haste*=0.78; p.armor=(p.armor||0)-0.2; } },
+    { ico:'🗡️', nm:'Glass Edge',       ds:'+40% damage · no armor',             apply:p=>{ p.power*=1.4; p.armor=0; } },
+  ],
+  'altar-defense': [  // Hall of Vigor — durability for output
+    { ico:'🛡️', nm:'Aegis',      ds:'−35% damage taken · −12% damage', apply:p=>{ p.armor=Math.min(0.75,(p.armor||0)+0.35); p.power*=0.88; } },
+    { ico:'❤️', nm:'Titan',      ds:'+60% max HP · −10% move',         apply:p=>{ p.maxhp=Math.round(p.maxhp*1.6); p.hp=p.maxhp; p.speed*=0.9; p.baseSpeed*=0.9; } },
+    { ico:'🍵', nm:"Monk's Vow", ds:'+5 HP/sec · −18% damage',         apply:p=>{ p.regen+=5; p.power*=0.82; } },
+  ],
+  'altar-utility': [  // Spirit Pool — tempo
+    { ico:'👣', nm:'Gale',      ds:'+22% move · −18% cooldowns · +15% dmg taken', apply:p=>{ p.speed*=1.22; p.baseSpeed*=1.22; p.haste*=0.82; p.armor=(p.armor||0)-0.15; } },
+    { ico:'💠', nm:'Avarice',   ds:'+50% ki · +40% pickup · −10% max HP',         apply:p=>{ p.xpMult=(p.xpMult||1)*1.5; p.magnet*=1.4; p.maxhp=Math.round(p.maxhp*0.9); p.hp=Math.min(p.hp,p.maxhp); } },
+    { ico:'🧲', nm:'Magnetize', ds:'+80% pickup range · +10% ki',                 apply:p=>{ p.magnet*=1.8; p.xpMult=(p.xpMult||1)*1.1; } },
+  ],
+};
+const ALTAR_BY_GROUP = { combat:'altar-combat', defense:'altar-defense', utility:'altar-utility' };
+const DRAFT_TITLES = {
+  blessing:       ['Forgotten Shrine', 'A BLESSING'],
+  arsenal:        ['Ronin’s Cache', 'ARM YOURSELF'],
+  'altar-combat': ['Smithy Altar',  'A DARK BARGAIN'],
+  'altar-defense':['Vigor Altar',   'A DARK BARGAIN'],
+  'altar-utility':['Spirit Altar',  'A DARK BARGAIN'],
+};
+function openBuildingDraft(kind){
+  const pool = BUILDING_BOONS[kind];
+  if (!pool || !game) return;
+  if (kind === 'blessing') player.hp = player.maxhp;   // a shrine restores you
+  game.state = STATE.LEVELUP;
+  const opts = pool.slice();
+  for (let i=opts.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [opts[i],opts[j]]=[opts[j],opts[i]]; }
+  const chosen = opts.slice(0, 3);
+  const t = DRAFT_TITLES[kind] || ['Reward', 'CHOOSE A BOON'];
+  D('lv-tag').textContent = t[0];
+  D('lv-ttl').textContent = t[1];
+  elCards.innerHTML = '';
+  const altar = kind.startsWith('altar');
+  for (const o of chosen){
+    const card = document.createElement('div');
+    card.className = 'card' + (altar ? ' new' : '');
+    card.innerHTML = `<div class="ct"><span class="ico">${o.ico}</span><span class="nm">${o.nm}</span>`+
+                     `<span class="lv">${altar ? 'PACT' : 'BOON'}</span></div><div class="ds">${o.ds}</div>`;
+    card.onclick = ()=>{ o.apply(player); game.state = STATE.PLAY; showOnly(null); };
+    elCards.appendChild(card);
+  }
+  showOnly(elLevelup);
 }
 
 // =====================================================================
@@ -4521,7 +4614,7 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     ctx, cv, TAU, RONIN_SPRITE,
     drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
     drawArcher, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
-    newGame, startDojo,
+    newGame, startDojo, openBuildingDraft, BUILDING_BOONS, DOJO_STATIONS,
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
     get enemies(){return enemies},

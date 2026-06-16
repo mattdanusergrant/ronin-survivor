@@ -5,28 +5,24 @@ are deliberate "later" items — not bugs. Each is a redesign, not a tweak.
 
 ---
 
-## 1. Design pass on all special buildings
+## 1. Design pass on all special buildings — ✅ DONE (2026-06-16)
 
-**Why:** The non-camp buildings are mechanically thin and disconnected from the
-moment-to-moment combat. Right now each is a one-shot effect or a menu:
+Resolved via the "full recast" direction:
+- Clearing a special building now grants a **run-scoped boon draft** (pick 1 of
+  3) via the level-up card UI — `BUILDING_BOONS` + `openBuildingDraft`.
+  - Shrine → defensive *Blessing* (heals to full first).
+  - Cache → offensive *Arsenal* (weapon level / new weapon / damage).
+  - Smithy/Vigor/Spirit → build-defining *Altar* pacts with a tradeoff.
+- Mid-run permanent Ryo shops **removed**; all permanent spending moved to the
+  Dojo's new **Ryo Trader** station (`kind:'shop'` → `openDojoShop`).
+- Zone chain **randomised** each run (zone 1 tutorial camp + shuffled mix
+  guaranteeing all five specials + two camps).
+- Bandit camps unchanged (Ryo orb + campfire checkpoint).
 
-- **Shrine** (`shrine`) — boss death → full heal. One-time.
-- **Cache** (`cache`) — boss death → +15% damage buff. One-time.
-- **Smithy / shops** (`smithy` + `shopGroup` combat/defense/utility) — freeing
-  the building makes its door open a permanent-upgrade (Ryo) store mid-run.
-- Turret slots used to attach here — **now removed** (replaced by the Dojo
-  guardian archer), so freed shops currently only open their store.
-
-**Open questions to resolve in the pass:**
-- Should special buildings grant *run-scoped* power (build-defining choices)
-  instead of flat one-time buffs or out-of-band Ryo shopping?
-- Do mid-run Ryo stores even belong in a run, or should all permanent spending
-  live in the Dojo between runs? (Two shopping contexts feels redundant.)
-- Can each building type read as a distinct, memorable landmark with a clear
-  promise (heal / power / choice), rather than interchangeable spiral nodes?
-
-**Touch points:** `BUILDING_TYPES`, `checkCampCleared` (rewards), `openDojoShop`
-/ shop overlay, `spawnCampBoss`.
+**Follow-up tuning (not blocking):** boon magnitudes are first-pass guesses;
+balance once enemy flow (#2) is settled. Consider boss-fight identity per
+building type as a separate pass (each boss is still just a stat block + the
+shared telegraph set).
 
 ---
 
