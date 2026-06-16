@@ -1317,6 +1317,87 @@ const ENEMY_SPRITE_KEY = { footpad:'footpad', ronin:'roninEnemy', brute:'brute' 
 const COLOR_TO_SPRITE = {};
 for (const k in ENEMY_TYPES){ if (ENEMY_SPRITE_KEY[k]) COLOR_TO_SPRITE[ENEMY_TYPES[k].color] = ENEMY_SPRITE_KEY[k]; }
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
+
+// =====================================================================
+//  ENEMY ATTACKS — telegraphed strikes + slow dodgeable projectiles.
+//  Two archetypes: 'tele' draws a locked red ground circle that fills as a
+//  countdown, then hits anything inside; 'proj' lobs slow bolts you can sidestep.
+//  Each regular type gets ONE signature; bosses cycle the whole BOSS list.
+// =====================================================================
+const COLOR_TO_TYPE = {};
+for (const k in ENEMY_TYPES) COLOR_TO_TYPE[ENEMY_TYPES[k].color] = k;
+const ENEMY_ATK = {
+  footpad: { type:'proj', cd:[2.4,3.8], range:330, wind:0.30, n:1, spread:0,    pspeed:155, pdmg:7, pr:7, hue:'#c9d36b' },
+  ninja:   { type:'proj', cd:[2.8,4.2], range:360, wind:0.32, n:3, spread:0.42, pspeed:195, pdmg:8, pr:6, hue:'#9be3ff' },
+  ronin:   { type:'tele', cd:[3.0,4.4], range:155, wind:0.55, aoe:52, dmgMul:1.35, lunge:80 },
+  brute:   { type:'tele', cd:[3.4,5.0], range:215, wind:0.85, aoe:82, dmgMul:1.50, lunge:0  },
+};
+// Bosses rotate through ALL of these — every boss has multiple tells.
+const BOSS_ABILITIES = [
+  { type:'tele', wind:0.85, aoe:100, dmgMul:1.20, lunge:0 },                                         // ground slam on you
+  { type:'proj', wind:0.55, n:10, spread:0, pspeed:140, pdmg:11, pr:8, ring:true, hue:'#ff7a3d' },   // radial bolt ring
+  { type:'tele', wind:0.60, aoe:64,  dmgMul:1.15, lunge:150 },                                       // lunging cleave
+  { type:'proj', wind:0.45, n:5, spread:0.30, pspeed:205, pdmg:10, pr:7, hue:'#ff9d5c' },            // aimed 5-bolt fan
+];
+function enemyType(e){ return COLOR_TO_TYPE[e.color] || 'footpad'; }
+function enemyAtkCd(e){
+  if (e.boss) return rand(1.5, 2.4);
+  const A = ENEMY_ATK[enemyType(e)];
+  return A ? rand(A.cd[0], A.cd[1]) : 99;
+}
+function bossPickAbility(e){
+  e.abilIdx = (e.abilIdx == null) ? (Math.random()*BOSS_ABILITIES.length|0)
+                                  : (e.abilIdx + 1) % BOSS_ABILITIES.length;
+  return BOSS_ABILITIES[e.abilIdx];
+}
+// Begin a windup: locks the telegraph target so you can dodge clear of it.
+function startEnemyAttack(e, dx, dy){
+  const A = e.boss ? bossPickAbility(e) : ENEMY_ATK[enemyType(e)];
+  if (!A) return;
+  e.curAtk = A; e.atk = 'wind'; e.windMax = A.wind; e.windT = A.wind;
+  if (A.type === 'tele'){
+    const ang = Math.atan2(dy, dx);
+    if (A.lunge){ e.tgx = e.x + Math.cos(ang)*A.lunge; e.tgy = e.y + Math.sin(ang)*A.lunge; }
+    else { e.tgx = player.x; e.tgy = player.y; }   // slam locks onto your current spot
+    e.tgr = A.aoe;
+  }
+}
+// Fire the windup's payload. Returns true if it triggered a player respawn.
+function resolveEnemyAttack(e){
+  const A = e.curAtk, P = player;
+  if (!A) return false;
+  if (A.type === 'tele'){
+    fx.push({ kind:'shock', x:e.tgx, y:e.tgy, r:e.tgr, t:0, life:0.4, c:'#ff5a3c' });
+    for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(60,180);
+      fx.push({ kind:'spark', x:e.tgx, y:e.tgy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.25,.5), c:'#ff8a5a' }); }
+    const dd = Math.hypot(P.x - e.tgx, P.y - e.tgy);
+    if (dd < e.tgr + P.r) return hitPlayer(e.dmg * A.dmgMul);
+  } else {
+    const base = Math.atan2(P.y - e.y, P.x - e.x);
+    const n = A.n || 1, spread = A.spread || 0;
+    for (let i=0;i<n;i++){
+      const a = A.ring ? base + i*(TAU/n) : base + (n>1 ? (i-(n-1)/2)*spread : 0);
+      shots.push({ kind:'foeBolt', foe:true, x:e.x + Math.cos(a)*(e.r+4), y:e.y + Math.sin(a)*(e.r+4),
+        vx:Math.cos(a)*A.pspeed, vy:Math.sin(a)*A.pspeed, dmg:A.pdmg, r:A.pr, life:3.2, rot:a, hue:A.hue||'#ff7a3d' });
+    }
+  }
+  return false;
+}
+// Apply a hit to the player (i-frames respected). Returns true if it respawned.
+function hitPlayer(dmg){
+  const P = player;
+  if (P.inv > 0) return false;
+  P.hp -= dmg * (1 - (P.armor||0));
+  P.inv = 0.7; P.hurt = 0.25; shake = Math.max(shake, 6);
+  if (P.hp <= 0){
+    if (P.revives > 0){
+      P.revives--; P.hp = P.maxhp*0.5; P.inv = 1.6; shake = Math.max(shake, 14);
+      for (let i=0;i<24;i++){ const a=rand(0,TAU), sp=rand(120,260);
+        fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
+    } else { respawnAtCheckpoint(); return true; }
+  }
+  return false;
+}
 // Spawn pressure no longer ramps with the clock — it ramps with conquest.
 // Every building the player has cleared (freed shop or beaten camp) raises
 // the world's hostility one notch; sitting still keeps the pace gentle.
@@ -2054,35 +2135,42 @@ function update(dt){
         }
       }
     } else {
-      // chase — straight at player; group-charge boost when clustered with allies
-      const sp = e.speed * (e.chargeT > 0 ? 1.45 : 1);
-      e.x += dx/d * sp * dt;
-      e.y += dy/d * sp * dt;
-      if (e.chargeT > 0) e.chargeT -= dt;
-      else if (!e.boss){
-        e.chargeCheckT -= dt;
-        if (e.chargeCheckT <= 0){
-          e.chargeCheckT = rand(0.7, 1.2);
-          let near = 0;
-          for (const a of enemies){
-            if (a === e || a.state !== 'chase' || a.boss) continue;
-            const ax = a.x-e.x, ay = a.y-e.y;
-            if (ax*ax + ay*ay < 80*80){ if (++near >= 3) break; }
-          }
-          if (near >= 3) e.chargeT = rand(1.4, 2.2);
+      // chase — windups root the enemy (the tell); otherwise advance + maybe attack
+      if (e.atkCd == null) e.atkCd = enemyAtkCd(e);
+      if (e.atk === 'wind'){
+        e.windT -= dt;
+        if (e.windT <= 0){
+          e.atk = null; e.atkCd = enemyAtkCd(e);
+          if (resolveEnemyAttack(e)) return;
         }
+      } else {
+        // straight at player; group-charge boost when clustered with allies
+        const sp = e.speed * (e.chargeT > 0 ? 1.45 : 1);
+        e.x += dx/d * sp * dt;
+        e.y += dy/d * sp * dt;
+        if (e.chargeT > 0) e.chargeT -= dt;
+        else if (!e.boss){
+          e.chargeCheckT -= dt;
+          if (e.chargeCheckT <= 0){
+            e.chargeCheckT = rand(0.7, 1.2);
+            let near = 0;
+            for (const a of enemies){
+              if (a === e || a.state !== 'chase' || a.boss) continue;
+              const ax = a.x-e.x, ay = a.y-e.y;
+              if (ax*ax + ay*ay < 80*80){ if (++near >= 3) break; }
+            }
+            if (near >= 3) e.chargeT = rand(1.4, 2.2);
+          }
+        }
+        // attack trigger — wind up a tell when off cooldown and in range
+        e.atkCd -= dt;
+        const startR = e.boss ? 440 : (ENEMY_ATK[enemyType(e)] ? ENEMY_ATK[enemyType(e)].range : 0);
+        if (e.atkCd <= 0 && d < startR) startEnemyAttack(e, dx, dy);
       }
     }
 
-    if (d < e.r + P.r && P.inv<=0){
-      P.hp -= e.dmg * (1 - (P.armor||0)); P.inv = 0.7; P.hurt = 0.25; shake = Math.max(shake, 6);
-      if (P.hp <= 0){
-        if (P.revives > 0){               // Tenacity — spend a revive
-          P.revives--; P.hp = P.maxhp * 0.5; P.inv = 1.6; shake = Math.max(shake, 14);
-          for (let i=0;i<24;i++){ const a=rand(0,TAU), sp=rand(120,260);
-            fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.8), c:'#ffe79b' }); }
-        } else { respawnAtCheckpoint(); return; }
-      }
+    if (d < e.r + P.r){
+      if (hitPlayer(e.dmg)) return;
     }
     // shove the enemy out of any lake/thicket it stepped on this frame
     if (!game.dojoMode && !e.dummy) pushOutOfObstacles(e);
@@ -2112,6 +2200,18 @@ function update(dt){
     else {
       const sdx = s.x - s.ox, sdy = s.y - s.oy;
       if (sdx*sdx + sdy*sdy > MAX_PROJ_RANGE2) s.life = 0;
+    }
+
+    // ENEMY PROJECTILE — slow, dodgeable; damages the player, ignores enemies
+    if (s.foe){
+      s.x += s.vx*dt; s.y += s.vy*dt;
+      s.rot = Math.atan2(s.vy, s.vx);
+      const pdx = player.x - s.x, pdy = player.y - s.y;
+      if (pdx*pdx + pdy*pdy < (s.r + player.r)*(s.r + player.r)){
+        s.life = 0;
+        if (hitPlayer(s.dmg)) return;
+      }
+      continue;
     }
 
     // LANTERN — stationary, ticks damage to enemies in radius
@@ -2685,6 +2785,8 @@ function draw(){
   for (const o of orbs) drawOrb(o);
 
   // enemies
+  // telegraphed-attack ground markers (under the enemies that cast them)
+  for (const e of enemies){ if (e.windT > 0 && e.curAtk && e.curAtk.type === 'tele') drawTelegraph(e); }
   for (const e of enemies) drawEnemy(e);
 
   // spirit blades
@@ -3113,6 +3215,21 @@ function drawOrb(o){
   ctx.restore();
 }
 
+// Locked red ground circle that fills toward the centre as a strike countdown.
+function drawTelegraph(e){
+  const p = clamp(1 - Math.max(0, e.windT)/e.windMax, 0, 1);
+  ctx.save(); ctx.translate(e.tgx, e.tgy);
+  ctx.globalAlpha = 0.5 + 0.25*Math.sin(e.windT*22);   // pulse
+  ctx.fillStyle = 'rgba(225,50,40,0.22)';
+  ctx.beginPath(); ctx.arc(0,0,e.tgr,0,TAU); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = 'rgba(255,80,60,0.9)'; ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.arc(0,0,e.tgr,0,TAU); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,150,60,0.4)';               // converging fill = impact
+  ctx.beginPath(); ctx.arc(0,0,e.tgr*p,0,TAU); ctx.fill();
+  ctx.restore();
+}
+
 function drawEnemy(e){
   if (e.dummy){ drawDummy(e); return; }
   ctx.save(); ctx.translate(e.x,e.y);
@@ -3123,6 +3240,14 @@ function drawEnemy(e){
     ctx.shadowColor = '#e7b53b'; ctx.shadowBlur = 14;
     ctx.fillStyle = 'rgba(231,181,59,0.18)';
     ctx.beginPath(); ctx.arc(0, 0, e.r*1.6, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+  // windup aura — swells red as the enemy commits to a tell (also the throw cue)
+  if (e.atk === 'wind' && e.windMax){
+    const wp = 1 - Math.max(0, e.windT)/e.windMax;
+    ctx.shadowColor = '#ff5a3c'; ctx.shadowBlur = 10 + wp*12;
+    ctx.fillStyle = `rgba(255,90,60,${0.14 + wp*0.26})`;
+    ctx.beginPath(); ctx.arc(0, 0, e.r*(1.45 + wp*0.45), 0, TAU); ctx.fill();
     ctx.shadowBlur = 0;
   }
   // body — artist sprite when delivered, else procedural
@@ -3284,6 +3409,14 @@ function drawShot(s){
     ctx.fillStyle='#0c0814'; ctx.fillRect(-8,-11,16,3); ctx.fillRect(-8,9,16,3);
     ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(5,-4); ctx.moveTo(-5,0); ctx.lineTo(5,0); ctx.moveTo(-5,4); ctx.lineTo(5,4); ctx.stroke();
+  } else if (s.kind==='foeBolt'){   // enemy projectile — slow, dodgeable orb
+    ctx.rotate(s.rot||0);
+    ctx.shadowColor = s.hue||'#ff7a3d'; ctx.shadowBlur = 10;
+    ctx.fillStyle = s.hue||'#ff7a3d';
+    ctx.beginPath(); ctx.ellipse(0,0,s.r*1.3,s.r*0.75,0,0,TAU); ctx.fill();
+    ctx.fillStyle = '#fff2e0';
+    ctx.beginPath(); ctx.arc(s.r*0.3,0,s.r*0.35,0,TAU); ctx.fill();
+    ctx.shadowBlur = 0;
   } else if (s.kind==='aimbolt'){   // left-click ki bolt — a bright cyan dart
     ctx.rotate(s.rot||0);
     ctx.shadowColor='#7ce8ef'; ctx.shadowBlur=12;
@@ -3444,6 +3577,14 @@ function drawFx(f){
     ctx.shadowBlur=0;
     ctx.strokeStyle='rgba(216,54,82,0.55)'; ctx.lineWidth=1;
     ctx.beginPath(); ctx.arc(f.x, f.y, f.r * (0.4 + k*0.4), 0, TAU); ctx.stroke();
+    ctx.restore();
+  } else if (f.kind==='shock'){
+    // impact shockwave — expanding ring where a telegraphed strike lands
+    const k = f.t/f.life;
+    ctx.save(); ctx.globalAlpha = 1 - k;
+    ctx.shadowColor = f.c; ctx.shadowBlur = 16;
+    ctx.strokeStyle = f.c; ctx.lineWidth = 4*(1-k) + 1;
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r*(0.5 + k*0.7), 0, TAU); ctx.stroke();
     ctx.restore();
   } else if (f.kind==='warn'){
     // boss incoming flash text (screen space handled in HUD-ish way)
@@ -4439,6 +4580,7 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
     get enemies(){return enemies},
+    get shots(){return shots}, get fx(){return fx},
     get lastAng(){return lastAng}, set lastAng(v){lastAng=v},
   };
 }
