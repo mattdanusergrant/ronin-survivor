@@ -224,7 +224,8 @@
       <div class="opt" id="opt-joystick"><span>Show on-screen joystick</span><span class="sw"></span></div>
       <div class="opt" id="opt-upgrademode"><span>Upgrade style</span><span class="modetag" id="opt-upgrademode-label">Classic</span></div>
     </div>
-    <div class="btn btn-sec" id="opt-soccer" style="margin-top:8px">⚽ Samurai Soccer</div>
+    <div class="tag" style="margin-top:14px; opacity:0.6">⛩ off the dojo path…</div>
+    <div class="btn btn-sec" id="opt-soccer" style="margin-top:6px">⚽ Samurai Soccer</div>
     <div class="btn btn-sec" id="opt-volley">🏐 Samurai Volleyball</div>
     <div class="btn btn-sec" id="opt-newgame" style="border-color:#5a2420; color:#d8362b; margin-top:8px">⚠ New Game (wipe progress)</div>
     <div class="btn" id="opt-back">Back</div>
@@ -381,9 +382,7 @@ const DOJO = { WIDTH: 460, HEIGHT: 880, WALL: 14 };
 // separate buildings; the Dojo is now purely the hub for Pit, mini-games,
 // and the gate. Repacked the layout to fill the freed vertical space.
 const DOJO_STATIONS = [
-  { id:'forge',  name:'Spirit Forge',     ico:'⚒️', x:-180, y:   0, r:38, kind:'forge' },
-  { id:'soccer', name:'Samurai Soccer', ico:'⚽', x:-140, y: 140, r:38, kind:'game', action:'soccer' },
-  { id:'volley', name:'Samurai Volley', ico:'🏐', x: 140, y: 140, r:38, kind:'game', action:'volley' },
+  { id:'forge',  name:'Spirit Forge',   ico:'⚒️', x:-180, y:   0, r:38, kind:'forge' },
   { id:'gate',   name:'The Road',       ico:'⛩️', x:   0, y: 340, r:42, kind:'run' },
 ];
 const DOJO_DUMMIES = [  // four dummies stacked along the right wall
@@ -445,7 +444,7 @@ const BUILDING_TYPES = {
   cache:   { name:"Ronin's Cache",    ico:'📦', tag:'+15% DMG',color:'#e7b53b', reward:'buff',
              boss: { name:'Cache Sentinel',   hp:400, speed:46, dmg:22, r:25, xp:44 } },
   // Shop buildings — captured by bosses; freeing the building unlocks the
-  // matching upgrade store and adds four empty turret slots for the player.
+  // matching upgrade store at its door.
   smithy:  { name:'Smithy',         ico:'🗡️', tag:'Combat shop',  color:'#b58a3a', shopGroup:'combat',
              boss: { name:'Captured Smith',  hp:380, speed:52, dmg:20, r:26, xp:46 } },
   vigor:   { name:'Hall of Vigor',  ico:'🛡️', tag:'Defense shop', color:'#5a7a9a', shopGroup:'defense',
@@ -930,39 +929,12 @@ function makeBuilding(type, x, y){
     kind:'building', type, x, y, r:46,
     name:cfg.name, ico:cfg.ico, tag:cfg.tag, color:cfg.color,
     state:'fresh', reward:cfg.reward, shopGroup:cfg.shopGroup,
-    slots:[],
   };
-  // Only the Dojo has turret slots — and they arrive pre-armed at all four corners.
-  // Enemy camps are deliberately undefended structures.
-  if (type === 'dojo'){
-    const SLOT_DIST = 78;
-    for (let i=0; i<4; i++){
-      const ang = (i/4) * TAU + Math.PI/4;   // NE, SE, SW, NW
-      b.slots.push({
-        kind:'slot',
-        x: x + Math.cos(ang) * SLOT_DIST,
-        y: y + Math.sin(ang) * SLOT_DIST,
-        r: 20,
-        ang,
-        building: b,
-        turret: { cd:0, lastFireAng: ang + Math.PI, lvl:1 },
-      });
-    }
-  }
   return b;
 }
-const TURRET_COST = 30;
-// Turrets level up with Ryo — the Dojo's defenses have to keep pace with the
-// enemy lanes that every opened return road adds.
-const TURRET_MAX_LVL = 6;
-const turretUpCost = t => Math.floor(30 * Math.pow(1.5, t.lvl || 1));
-function turretStats(t){
-  const l = (t.lvl || 1) - 1;
-  return { dmg:   TURRET.dmg   * (1 + 0.5*l),
-           cdMax: TURRET.cdMax * Math.pow(0.9, l),
-           range: TURRET.range * (1 + 0.08*l) };
-}
-const TURRET = { dmg:24, cdMax:0.95, range:240, shotSpeed:520 };
+// The Dojo's lone guardian: one friendly archer who looses homing arrows at
+// whatever wanders into range. No slots, no Ryo, no upgrades — just a sentinel.
+const ARCHER = { dmg:30, cdMax:0.8, range:320, shotSpeed:440 };
 
 // snapshot/restore the entire run so the dojo can be visited mid-run
 let runSnapshot = null;
@@ -1233,12 +1205,14 @@ function newGame(){
   }
   game.obGrid    = buildObstacleGrid(game.obstacles);
   game.campfires = [];   // campfires only appear where bandit camps fall
-  // spawn the samurai right on the Dojo door, between the four pre-armed turrets
+  game.archer = null;
+  // spawn the samurai right on the Dojo door; one friendly archer stands guard
   const dojoB = game.buildings.find(b => b.type === 'dojo');
   if (dojoB){
     player.x = dojoB.x; player.y = dojoB.y;
     game.cam.x = dojoB.x; game.cam.y = dojoB.y;
     game.checkpoint = { x: dojoB.x, y: dojoB.y, label: 'The Dojo' };
+    game.archer = { x: dojoB.x + 60, y: dojoB.y - 60, cd: 0, aim: -Math.PI/2, shootT: 0 };
   }
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:player.x+rand(-VW,VW), y:player.y+rand(-VH,VH), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
@@ -1595,9 +1569,8 @@ function checkCampCleared(b){
       }
     }
     if (b.shopGroup){
-      // shop building: free the structure — unlock 4 empty turret slots
-      // and the door becomes interactable to open its shop overlay.
-      addBuildingSlots(b);
+      // shop building: free the structure — its door becomes interactable so
+      // you can open its upgrade store (handled via state === 'cleared').
     } else if (b.reward){
       // camp: drop the reward orb at the door
       orbs.push({ x:b.x, y:b.y, xp:0, pull:0, isReward:true, reward:b.reward });
@@ -1606,47 +1579,29 @@ function checkCampCleared(b){
       fx.push({ kind:'spark', x:b.x, y:b.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.5,1.0), c:'#e7b53b' }); }
   }
 }
-function addBuildingSlots(b){
-  const SLOT_DIST = 78;
-  for (let i=0; i<4; i++){
-    const ang = (i/4) * TAU + Math.PI/4;
-    b.slots.push({
-      kind:'slot', x: b.x + Math.cos(ang)*SLOT_DIST, y: b.y + Math.sin(ang)*SLOT_DIST,
-      r: 20, ang, building: b, turret: null,
-    });
+// The Dojo's guardian archer — picks the nearest foe in range and looses a
+// homing arrow. Reuses the 'arrow' shot (fast, gently tracking, single-target).
+function updateArcher(dt){
+  if (!game || game.dojoMode || !game.archer) return;
+  const a = game.archer;
+  if (a.shootT > 0) a.shootT -= dt;
+  a.cd -= dt;
+  if (a.cd > 0) return;
+  let near = null, bestD2 = ARCHER.range * ARCHER.range;
+  for (const e of enemies){
+    if (e.dead || e.dummy) continue;
+    const dx = e.x - a.x, dy = e.y - a.y, d2 = dx*dx + dy*dy;
+    if (d2 < bestD2){ bestD2 = d2; near = e; }
   }
-}
-function updateTurrets(dt){
-  if (!game || !game.buildings || game.dojoMode) return;
-  for (const b of game.buildings){
-    for (const slot of b.slots){
-      const t = slot.turret;
-      if (!t) continue;
-      t.cd -= dt;
-      if (t.cd > 0) continue;
-      const st = turretStats(t);
-      // nearest live foe in range (ignore dummies — they're only in the dojo anyway)
-      let near = null, bestD2 = st.range * st.range;
-      for (const e of enemies){
-        if (e.dead || e.dummy) continue;
-        const dx = e.x - slot.x, dy = e.y - slot.y;
-        const d2 = dx*dx + dy*dy;
-        if (d2 < bestD2){ bestD2 = d2; near = e; }
-      }
-      if (!near) continue;
-      t.cd = st.cdMax;
-      const ang = Math.atan2(near.y - slot.y, near.x - slot.x);
-      t.lastFireAng = ang;
-      shots.push({
-        kind:'turretShot',
-        x: slot.x, y: slot.y,
-        vx: Math.cos(ang)*TURRET.shotSpeed, vy: Math.sin(ang)*TURRET.shotSpeed,
-        dmg: st.dmg, r: 5,
-        life: st.range / TURRET.shotSpeed,
-        pierce: 0, rot: ang,
-      });
-    }
-  }
+  if (!near) return;
+  a.cd = ARCHER.cdMax;
+  const ang = Math.atan2(near.y - a.y, near.x - a.x);
+  a.aim = ang; a.shootT = 0.2;
+  shots.push({
+    kind:'arrow', x: a.x, y: a.y,
+    vx: Math.cos(ang)*ARCHER.shotSpeed, vy: Math.sin(ang)*ARCHER.shotSpeed,
+    dmg: ARCHER.dmg, r: 5, life: 1.4, speed: ARCHER.shotSpeed, turn: 3.2, rot: ang,
+  });
 }
 function applyReward(kind){
   if (kind === 'ryo'){
@@ -2227,7 +2182,7 @@ function update(dt){
   }
 
   fireWeapons(dt);
-  updateTurrets(dt);
+  updateArcher(dt);
 
   // projectiles
   for (const s of shots){
@@ -2438,7 +2393,7 @@ function update(dt){
     if (e.dead) return false;
     if (e.boss) return true;
     // marchers always persist — they originate from far across the map and
-    // need a long walk to reach the dojo; turrets/player eventually finish them
+    // need a long walk to reach the dojo; the archer/player eventually finish them
     if (e.state === 'march') return true;
     const dx = e.x - player.x, dy = e.y - player.y;
     return dx*dx + dy*dy < cullR2;
@@ -2481,9 +2436,6 @@ function updateDojoStations(){
       // Dojo is interactable (subject to lock); SAVED shop buildings are too
       if (b.type === 'dojo') candidates.push(b);
       else if (b.shopGroup && b.state === 'cleared') candidates.push(b);
-      // empty slots arm a turret; armed slots upgrade it (until max level)
-      for (const slot of b.slots)
-        if (!slot.turret || (slot.turret.lvl || 1) < TURRET_MAX_LVL) candidates.push(slot);
     }
     // campfires — rest + spend Ki for upgrades
     if (game.campfires) for (const c of game.campfires){
@@ -2508,17 +2460,6 @@ function updateDojoStations(){
         if (near.type === 'dojo') label = 'ENTER — ' + near.name;
         else if (near.shopGroup) label = 'ENTER — ' + near.name;
         else label = 'APPROACH — ' + near.name;   // unreachable in practice
-      } else if (near.kind === 'slot'){
-        if (!near.turret){
-          label = META.ryo >= TURRET_COST
-            ? `PLACE TURRET · ${TURRET_COST} 🪙`
-            : `NEED ${TURRET_COST} 🪙`;
-        } else {
-          const cost = turretUpCost(near.turret);
-          label = META.ryo >= cost
-            ? `UPGRADE TURRET Lv${(near.turret.lvl||1)+1} · ${cost} 🪙`
-            : `UPGRADE — NEED ${cost} 🪙`;
-        }
       } else if (near.kind === 'forge' || near.kind === 'campfire'){
         const cost = game.xpNext;
         const prefix = near.kind === 'forge' ? 'FORGE' : 'REST + FORGE';
@@ -2541,8 +2482,6 @@ function dojoActivate(){
   if (dt > 0 && dt < 200) return;       // robust against frozen/replayed clocks
   game.lastInteract = now || 1;
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
-  if (s.kind === 'game' && s.action === 'soccer'){ exitDojoTo(()=>startSoccer()); return; }
-  if (s.kind === 'game' && s.action === 'volley'){ exitDojoTo(()=>startVolley()); return; }
   if (s.kind === 'campfire'){
     openCampfireMenu();
     return;
@@ -2570,32 +2509,6 @@ function dojoActivate(){
     if (s.type === 'dojo') enterDojoFromRun();
     else if (s.shopGroup && s.state === 'cleared') openDojoShop(s.shopGroup);
     // camps & uncleared shops never require interaction — boss spawns on approach
-    return;
-  }
-  if (s.kind === 'slot'){
-    if (s.turret){
-      // armed → upgrade
-      if ((s.turret.lvl || 1) >= TURRET_MAX_LVL) return;
-      const cost = turretUpCost(s.turret);
-      if (META.ryo < cost){
-        fx.push({ kind:'dmg', x:s.x, y:s.y-26, v:'NEED RYO', t:0, life:1.0, vy:-30 });
-        return;
-      }
-      META.ryo -= cost; saveMeta();
-      s.turret.lvl = (s.turret.lvl || 1) + 1;
-      fx.push({ kind:'dmg', x:s.x, y:s.y-26, v:'Lv'+s.turret.lvl, t:0, life:1.0, vy:-30 });
-      game.interactWith = null;   // refresh the label for the next level
-    } else {
-      if (META.ryo < TURRET_COST){
-        fx.push({ kind:'dmg', x:s.x, y:s.y-26, v:'NEED RYO', t:0, life:1.0, vy:-30 });
-        return;
-      }
-      META.ryo -= TURRET_COST; saveMeta();
-      s.turret = { cd:0, lastFireAng: s.ang + Math.PI, lvl:1 };
-    }
-    shake = Math.max(shake, 3);
-    for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(60,140);
-      fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.55), c:'#e7b53b' }); }
     return;
   }
 }
@@ -2813,10 +2726,8 @@ function draw(){
       drawObstacle(o);
     }
     if (game.campfires) for (const c of game.campfires) drawCampfire(c);
-    if (game.buildings) for (const b of game.buildings){
-      drawBuilding(b);
-      for (const slot of b.slots) drawSlot(slot);
-    }
+    if (game.buildings) for (const b of game.buildings) drawBuilding(b);
+    if (game.archer) drawArcher(game.archer);
   }
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
@@ -3138,48 +3049,38 @@ function drawBuilding(b){
   ctx.restore();
 }
 
-function drawSlot(slot){
-  ctx.save(); ctx.translate(slot.x, slot.y);
-  if (slot.turret){
-    // base pad
-    ctx.fillStyle = '#3a2a14';
-    ctx.beginPath(); ctx.arc(0, 0, 14, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(0, 0, 14, 0, TAU); ctx.stroke();
-    // body
-    ctx.fillStyle = '#5a4520';
-    ctx.beginPath(); ctx.moveTo(-7, 4); ctx.lineTo(-5, -10); ctx.lineTo(5, -10); ctx.lineTo(7, 4); ctx.closePath(); ctx.fill();
-    ctx.strokeStyle = '#2a1f10'; ctx.stroke();
-    // banner-ish red top
-    ctx.fillStyle = '#8b1f1a';
-    ctx.fillRect(-5, -13, 10, 4);
-    // level pips around the pad — one gold notch per turret level
-    const lvl = slot.turret.lvl || 1;
-    ctx.fillStyle = '#e7b53b';
-    for (let i=0; i<lvl; i++){
-      const a = -Math.PI/2 + (i/TURRET_MAX_LVL)*TAU;
-      ctx.beginPath(); ctx.arc(Math.cos(a)*17, Math.sin(a)*17, 2, 0, TAU); ctx.fill();
-    }
-    // arrow / aim line pointing at last fire dir
-    ctx.rotate(slot.turret.lastFireAng);
-    ctx.strokeStyle = 'rgba(231,181,59,0.55)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(8, 0); ctx.lineTo(20, 0); ctx.stroke();
-    ctx.fillStyle = '#cfd3da';
-    ctx.beginPath(); ctx.moveTo(20, 0); ctx.lineTo(15, -2); ctx.lineTo(15, 2); ctx.closePath(); ctx.fill();
-  } else {
-    const active = game && game.interactWith === slot;
-    const afford = META.ryo >= TURRET_COST;
-    ctx.strokeStyle = active ? (afford ? '#e7b53b' : '#d8362b') : 'rgba(120,90,40,0.5)';
-    ctx.lineWidth = active ? 2.5 : 1.5;
-    ctx.setLineDash([5,5]); ctx.lineDashOffset = -((game.t||0)*8);
-    ctx.beginPath(); ctx.arc(0, 0, slot.r, 0, TAU); ctx.stroke();
-    ctx.setLineDash([]);
-    if (active){
-      ctx.font = 'bold 11px -apple-system,sans-serif';
-      ctx.fillStyle = afford ? '#e7b53b' : '#d8362b';
-      ctx.textAlign = 'center';
-      ctx.fillText(`${TURRET_COST} 🪙`, 0, slot.r + 12);
-    }
+// The Dojo's guardian archer — a small standing figure with a bow that draws
+// toward its last target. Friendly blue headband sets it apart from red foes.
+function drawArcher(a){
+  ctx.save(); ctx.translate(a.x, a.y);
+  // ground shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 9, 9, 3.5, 0, 0, TAU); ctx.fill();
+  // torso + head
+  ctx.fillStyle = '#2b3550';
+  ctx.beginPath(); ctx.arc(0, 1, 7, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#e8d9b5';
+  ctx.beginPath(); ctx.arc(0, -8, 4.6, 0, TAU); ctx.fill();
+  // friendly headband
+  ctx.fillStyle = '#3f7fd6';
+  ctx.fillRect(-5, -10, 10, 2);
+  ctx.fillStyle = '#3f7fd6';
+  ctx.beginPath(); ctx.moveTo(-5,-9); ctx.lineTo(-11,-6); ctx.lineTo(-5,-6); ctx.closePath(); ctx.fill();
+  // bow, aimed at the last target; bowstring pulls back briefly when loosing
+  ctx.rotate(a.aim || 0);
+  const drawn = a.shootT > 0;
+  ctx.strokeStyle = '#9a6b33'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(9, 0, 7, -1.15, 1.15); ctx.stroke();
+  ctx.strokeStyle = 'rgba(235,235,235,0.75)'; ctx.lineWidth = 1;
+  const nock = drawn ? 2.5 : 6.5;
+  ctx.beginPath();
+  ctx.moveTo(9 + Math.cos(-1.15)*7, Math.sin(-1.15)*7);
+  ctx.lineTo(nock, 0);
+  ctx.lineTo(9 + Math.cos(1.15)*7, Math.sin(1.15)*7);
+  ctx.stroke();
+  if (drawn){   // arrow on the string
+    ctx.strokeStyle = '#d8d2c4'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(nock, 0); ctx.lineTo(16, 0); ctx.stroke();
   }
   ctx.restore();
 }
@@ -4619,7 +4520,7 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
   window.__art = {
     ctx, cv, TAU, RONIN_SPRITE,
     drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
-    drawSlot, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
+    drawArcher, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
     newGame, startDojo,
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
