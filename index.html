@@ -821,16 +821,54 @@ function buildingsFromSpec(spec){
 function generateObstacles(buildings, paths){
   const out = [];
   const { R, STEP, HW } = MAZE;
+  const onPath = (x,y,rr)=>{ for (const s of paths.segs){ if (distToSeg(x,y,s) < HW + rr) return true; } return false; };
+  const nearBuilding = (x,y,rr)=> buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + rr);
+
+  // ---- PASS 1: large water bodies, placed FIRST so trees fill around them.
+  // Each body is a seed circle plus a few overlapping lobes → organic blob.
+  const lakes = [];
+  const target = Math.round((R*R) / (700*700));   // ~one body per 700u of area
+  let tries = 0;
+  while (lakes.length < target && tries < target*50){
+    tries++;
+    const ang = rand(0,TAU), rad = Math.sqrt(Math.random())*R;   // uniform over the disc
+    const cx = Math.cos(ang)*rad, cy = Math.sin(ang)*rad;
+    const baseR = rand(150, 300);                                // large
+    if (cx*cx + cy*cy > (R-baseR)*(R-baseR)) continue;
+    if (nearBuilding(cx, cy, baseR + 60) || onPath(cx, cy, baseR + 40)) continue;
+    if (lakes.some(l => Math.hypot(l.cx-cx, l.cy-cy) < l.baseR + baseR + 140)) continue;  // keep bodies distinct
+    const body = { cx, cy, baseR, maxR: baseR, circles: [{ x:cx, y:cy, r:baseR }] };
+    const lobes = 3 + (Math.random()*4|0);
+    for (let i=0;i<lobes;i++){
+      const a = rand(0,TAU), dd = rand(baseR*0.4, baseR*0.9), rr = baseR*rand(0.5,0.85);
+      const lx = cx+Math.cos(a)*dd, ly = cy+Math.sin(a)*dd;
+      if (lx*lx+ly*ly > (R-rr)*(R-rr)) continue;
+      if (nearBuilding(lx,ly,rr) || onPath(lx,ly,rr)) continue;
+      body.circles.push({ x:lx, y:ly, r:rr });
+      body.maxR = Math.max(body.maxR, Math.hypot(lx-cx, ly-cy) + rr);
+    }
+    lakes.push(body);
+    for (const c of body.circles) out.push({ type:'lake', x:c.x, y:c.y, r:c.r });
+  }
+  // true if a tree of radius rr at (x,y) would touch any water circle
+  const onWater = (x,y,rr)=>{
+    for (const l of lakes){
+      if (Math.hypot(l.cx-x, l.cy-y) > l.maxR + rr) continue;
+      for (const c of l.circles){ if (Math.hypot(c.x-x, c.y-y) < c.r + rr) return true; }
+    }
+    return false;
+  };
+
+  // ---- PASS 2: cherry trees fill the rest of the forest, never over water.
   for (let gy=-R; gy<=R; gy+=STEP){
     for (let gx=-R; gx<=R; gx+=STEP){
       const x = gx + rand(-14,14), y = gy + rand(-14,14);
       if (x*x + y*y > R*R) continue;
       const r = rand(MAZE.RMIN, MAZE.RMAX);
-      if (buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + r)) continue;
-      let onPath = false;
-      for (const s of paths.segs){ if (distToSeg(x, y, s) < HW + r){ onPath = true; break; } }
-      if (onPath) continue;
-      out.push({ type: Math.random() < 0.15 ? 'lake' : 'thicket', x, y, r });
+      if (nearBuilding(x,y,r)) continue;
+      if (onPath(x,y,r)) continue;
+      if (onWater(x,y,r)) continue;          // keep tree art clear of the water
+      out.push({ type: 'thicket', x, y, r });
     }
   }
   return out;
@@ -2949,20 +2987,23 @@ function drawObstacle(o){
     ctx.stroke();
     ctx.lineCap = 'butt';
   } else {
-    // thicket — dark green with a few shrub clusters
-    ctx.fillStyle = '#1c3520';
+    // cherry blossom — layered pink blooms over a shaded mauve under-canopy
+    ctx.fillStyle = '#3b2233';
     ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
-    ctx.strokeStyle = 'rgba(10,20,12,0.7)'; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(90,45,70,0.55)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
-    ctx.fillStyle = 'rgba(40,80,40,0.6)';
-    const clusters = 4 + ((o.r/40)|0);
+    // blossom clusters around the canopy (deterministic per tree → no shimmer)
+    const clusters = 5 + ((o.r/34)|0);
+    const seed = o.x * 0.013 + o.y * 0.017;
     for (let i=0; i<clusters; i++){
-      const a = (i / clusters) * TAU;
-      const rr = o.r * 0.6;
-      ctx.beginPath(); ctx.arc(Math.cos(a)*rr, Math.sin(a)*rr, o.r*0.22, 0, TAU); ctx.fill();
+      const a = (i / clusters) * TAU + seed;
+      const rr = o.r * 0.62;
+      ctx.fillStyle = (i & 1) ? 'rgba(247,168,196,0.92)' : 'rgba(233,140,180,0.92)';
+      ctx.beginPath(); ctx.arc(Math.cos(a)*rr, Math.sin(a)*rr, o.r*0.34, 0, TAU); ctx.fill();
     }
-    ctx.fillStyle = 'rgba(20,40,20,0.55)';
-    ctx.beginPath(); ctx.arc(0, 0, o.r*0.35, 0, TAU); ctx.fill();
+    // bright central bloom
+    ctx.fillStyle = 'rgba(255,201,221,0.95)';
+    ctx.beginPath(); ctx.arc(0, 0, o.r*0.5, 0, TAU); ctx.fill();
   }
   ctx.restore();
 }
@@ -3183,7 +3224,8 @@ function drawDummy(e){
 
 function drawPetal(pt){
   ctx.save(); ctx.translate(pt.x,pt.y); ctx.rotate(pt.rot); ctx.scale(pt.s,pt.s);
-  ctx.fillStyle = 'rgba(216,54,43,0.35)';
+  // faint cherry-blossom petal
+  ctx.fillStyle = 'rgba(255,190,214,0.5)';
   ctx.beginPath(); ctx.ellipse(0,0,4,2.2,0,0,TAU); ctx.fill();
   ctx.restore();
 }
