@@ -850,16 +850,18 @@ function generateObstacles(buildings, paths){
     lakes.push(body);
     for (const c of body.circles) out.push({ type:'lake', x:c.x, y:c.y, r:c.r });
   }
-  // true if a tree of radius rr at (x,y) would touch any water circle
-  const onWater = (x,y,rr)=>{
+  // true if (x,y) sits over open water — keeps tree CENTRES off the lake so the
+  // water stays visible, while edge trees still overhang it (their canopy
+  // radius reaches in, and trees draw on top of water → blossoms over the pond).
+  const inWater = (x,y)=>{
     for (const l of lakes){
-      if (Math.hypot(l.cx-x, l.cy-y) > l.maxR + rr) continue;
-      for (const c of l.circles){ if (Math.hypot(c.x-x, c.y-y) < c.r + rr) return true; }
+      if (Math.hypot(l.cx-x, l.cy-y) > l.maxR) continue;
+      for (const c of l.circles){ if (Math.hypot(c.x-x, c.y-y) < c.r) return true; }
     }
     return false;
   };
 
-  // ---- PASS 2: cherry trees fill the rest of the forest, never over water.
+  // ---- PASS 2: cherry trees fill the rest of the forest, overhanging water.
   for (let gy=-R; gy<=R; gy+=STEP){
     for (let gx=-R; gx<=R; gx+=STEP){
       const x = gx + rand(-14,14), y = gy + rand(-14,14);
@@ -867,7 +869,7 @@ function generateObstacles(buildings, paths){
       const r = rand(MAZE.RMIN, MAZE.RMAX);
       if (nearBuilding(x,y,r)) continue;
       if (onPath(x,y,r)) continue;
-      if (onWater(x,y,r)) continue;          // keep tree art clear of the water
+      if (inWater(x,y)) continue;            // leave open water; shoreline trees overhang it
       out.push({ type: 'thicket', x, y, r });
     }
   }
