@@ -17,14 +17,22 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 - **On a phone:** open the hosted URL above.
 - **Locally:** open `index.html` in any browser, or `python3 -m http.server` from the repo root and visit `http://localhost:8000`.
 
-**Controls:** **Move** with WASD / arrow keys, or **drag anywhere** on a touchscreen (a virtual stick appears). That's the only input — your weapons fire automatically. Walk over glowing **ki** to fill the level bar; on level-up, **tap a boon** to draft it. Don't let enemies touch you. Pause with **Esc/P** or the **II** button.
+**Controls (desktop-first):**
+
+- **Move** — WASD / arrow keys
+- **Aim + fire** — point with the mouse, hold **left-click** to fire an aimed ki bolt at the cursor
+- **Spacebar** — **dodge-roll** (a quick dash with brief invulnerability); when you're standing on something usable (campfire, turret slot, the Dojo, a saved shop) it **interacts** instead. `E`/`Enter` also interact.
+- Your drafted weapons still fire **automatically** on top of all this
+- **Esc/P** — pause
+
+Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to draft it. Don't let enemies touch you. *(Touch fallback: drag anywhere to move — mobile is no longer the primary target.)*
 
 **Goal:** survive as long as you can. Difficulty rises with the clock; a **warlord** arrives every minute. Build toward a screen-clearing storm of steel and spirit-fire before the swarm overwhelms you.
 
 ## What's in the prototype
 
-- Move-only control (WASD/arrows, or drag-anywhere virtual joystick on touch)
-- Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives
+- Desktop controls: WASD move, mouse-aimed left-click ki bolt, spacebar dodge-roll / interact (touch drag-to-move kept as a fallback)
+- Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives, all firing on top of the manual aimed shot
 - Level-up boon draft (3-of-N, pauses time)
 - A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; cleared camps leave campfire checkpoints; opened return-roads become permanent enemy lanes
 - **Dojo hub** between runs — walkable room with training dummies, upgradeable turrets, and stations

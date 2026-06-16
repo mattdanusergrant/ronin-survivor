@@ -10,7 +10,7 @@ A *Vampire Survivors*–style horde-survival auto-battler, themed as an homage t
 
 ## Pillars
 
-1. **One input, deep choices.** You only move. Every weapon fires itself. All the decision-making is in *positioning* and the *boon draft* on level-up.
+1. **Active swordsman, automatic swarm-clear.** You move, **aim + fire** a mouse-directed ki bolt, and **dodge-roll** through danger; your drafted weapons auto-fire on top. Decision-making lives in *positioning*, *aim/dodge timing*, and the *boon draft*. (Earlier builds were move-only; the combat layer was added deliberately, de-emphasising touch/mobile.)
 2. **The swarm is the clock.** Difficulty is time, not stages. Enemies get more numerous and tougher every second; warlords (bosses) arrive on a timer.
 3. **Power fantasy by minute 5.** Start fragile with one blade; end the run a whirling storm of steel and spirit-fire. The curve from "barely surviving" to "screen-clearing" is the product.
 4. **Style is a feature.** Drawn-not-licensed art; high-contrast Afro-Samurai palette; satisfying hit-feedback (flash, knockback, sparks, screen-shake, damage numbers).
@@ -33,7 +33,7 @@ A run takes place in a gated world carved out of solid forest: the Dojo sits at 
 
 Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait first. Built to this DoD — **all verified headlessly** (node syntax check + DOM-stubbed sim: spawn/kite/level-up/all-four-weapons/boss/render all pass):
 
-- **Control:** WASD/arrows on desktop; drag-anywhere virtual joystick on touch. Move-only; weapons are automatic.
+- **Control (desktop-first):** WASD/arrows to move; **mouse-aim + hold left-click** for an aimed ki bolt; **spacebar** to dodge-roll (i-frames + short cooldown) or to interact when standing on something usable (campfire/turret/Dojo/shop). Drafted weapons still auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
 - **4 weapons**, each 6 levels:
   | Weapon | Behaviour |
   |---|---|

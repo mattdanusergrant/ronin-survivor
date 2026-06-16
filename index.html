@@ -180,9 +180,10 @@
     <div class="btn" id="startbtn">🏯 ENTER THE DOJO</div>
     <div id="title-ryo" class="ryoline">🪙 <b>0</b> Ryo</div>
     <div class="help">
-      <b>Move:</b> WASD / arrows — or drag anywhere on screen (touch).<br>
-      Your blade swings on its own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
-      Don't get touched. Last as long as you can.
+      <b>Move:</b> WASD / arrows &nbsp; <b>Aim + fire:</b> mouse + hold left-click<br>
+      <b>Spacebar:</b> dodge-roll (i-frames) — or interact when prompted<br>
+      Your other weapons swing on their own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
+      Don't get touched. Last as long as you can. <span style="opacity:.6">(touch: drag to move)</span>
     </div>
     <div style="display:flex; gap:8px;">
       <div class="btn btn-sec" id="opt-from-title">Options</div>
@@ -1234,14 +1235,59 @@ function pMove(x,y){
 }
 function pEnd(){ stick.on=false; stick.dx=0; stick.dy=0; }
 cv.addEventListener('pointerdown', e=>{
+  // touch only — the virtual stick is the (deprioritised) mobile fallback.
+  // Mouse uses left-click to fire the aimed shot, handled separately below.
+  if (e.pointerType !== 'touch') return;
   const inMain   = game && game.state===STATE.PLAY;
   const inSoccer = soccer && soccer.state === 'play';
   const inVolley = volley && volley.state === 'play';
   if (inMain || inSoccer || inVolley){ cv.setPointerCapture(e.pointerId); pStart(e.clientX,e.clientY); }
 });
-cv.addEventListener('pointermove', e=>{ if (stick.on) pMove(e.clientX,e.clientY); });
-cv.addEventListener('pointerup', pEnd);
-cv.addEventListener('pointercancel', pEnd);
+cv.addEventListener('pointermove', e=>{ if (e.pointerType==='touch' && stick.on) pMove(e.clientX,e.clientY); });
+cv.addEventListener('pointerup', e=>{ if (e.pointerType==='touch') pEnd(); });
+cv.addEventListener('pointercancel', e=>{ if (e.pointerType==='touch') pEnd(); });
+
+// ---------- mouse aim + aimed shot (desktop primary) ----------
+const mouse = { x: 0, y: 0 };
+let mouseDown = false, usingMouse = false;
+addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; usingMouse = true; });
+cv.addEventListener('mousedown', e=>{ if (e.button===0){ mouse.x=e.clientX; mouse.y=e.clientY; usingMouse=true; mouseDown=true; } });
+addEventListener('mouseup', e=>{ if (e.button===0) mouseDown=false; });
+cv.addEventListener('contextmenu', e=> e.preventDefault());   // free right-click for later
+// World-space angle from (px,py) to the cursor. Uses run-mode viewScale; the
+// camera maps world→screen as screen = W/2 + viewScale*(world - cam).
+function aimAngle(px, py){
+  const wx = game.cam.x + (mouse.x - W/2)/viewScale;
+  const wy = game.cam.y + (mouse.y - H/2)/viewScale;
+  return Math.atan2(wy - py, wx - px);
+}
+
+// ---------- dodge roll + aimed bolt ----------
+const ROLL_TIME = 0.22, ROLL_CD = 0.7, ROLL_SPEED = 620;   // quick i-frame dash
+const AIM_CD = 0.30, AIM_DMG = 15, AIM_SPEED = 560;        // left-click ki bolt
+let aimCd = 0;
+function startRoll(){
+  const P = player;
+  if (!P || P.rollT > 0 || P.rollCd > 0) return;
+  const v = inputVec();
+  // roll in the move direction, or toward the cursor when standing still
+  const a = (v.x || v.y) ? Math.atan2(v.y, v.x) : aimAngle(P.x, P.y);
+  P.raDx = Math.cos(a); P.raDy = Math.sin(a);
+  P.rollT = ROLL_TIME; P.rollCd = ROLL_CD;
+  P.inv = Math.max(P.inv, ROLL_TIME + 0.06);   // invulnerable through the roll
+  lastAng = a;
+  for (let i=0;i<8;i++){ const sa=rand(0,TAU), sp=rand(40,110);
+    fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(sa)*sp, vy:Math.sin(sa)*sp, t:0, life:rand(.2,.4), c:'#cdbfa0' }); }
+}
+function fireAimedBolt(){
+  const P = player;
+  const a = aimAngle(P.x, P.y);
+  shots.push({ kind:'aimbolt', x:P.x, y:P.y, vx:Math.cos(a)*AIM_SPEED, vy:Math.sin(a)*AIM_SPEED,
+    dmg: AIM_DMG*P.power, r:7, life:0.75, pierce:0, rot:a });
+  lastAng = a;
+  fx.push({ kind:'spark', x:P.x+Math.cos(a)*16, y:P.y+Math.sin(a)*16,
+    vx:Math.cos(a)*70, vy:Math.sin(a)*70, t:0, life:0.18, c:'#7ce8ef' });
+}
 
 function inputVec(){
   let dx=0, dy=0;
@@ -1862,8 +1908,14 @@ function update(dt){
   const v = inputVec();
   P.moving = !!(v.x || v.y);
   if (P.moving){ lastAng = Math.atan2(v.y, v.x); P.walkPhase += dt*12; }
-  P.x += v.x * P.speed * dt;
-  P.y += v.y * P.speed * dt;
+  if (P.rollCd > 0) P.rollCd -= dt;
+  let mvx = v.x * P.speed, mvy = v.y * P.speed;
+  if (P.rollT > 0){ P.rollT -= dt; mvx = P.raDx * ROLL_SPEED; mvy = P.raDy * ROLL_SPEED; }
+  P.x += mvx * dt;
+  P.y += mvy * dt;
+  // aimed ranged shot (left mouse, held = auto-fire at cooldown) — additive to autos
+  if (aimCd > 0) aimCd -= dt;
+  if (mouseDown && aimCd <= 0 && !game.dojoMode && game.state === STATE.PLAY){ fireAimedBolt(); aimCd = AIM_CD; }
   if (game.dojoMode){
     // clamp to dojo room
     const hw = DOJO.WIDTH/2 - P.r - DOJO.WALL;
@@ -1896,10 +1948,9 @@ function update(dt){
       if (!game.checkpoint || game.checkpoint.x !== touched.x || game.checkpoint.y !== touched.y){
         game.checkpoint = { x: touched.x, y: touched.y, label: 'Campfire' };
       }
-      if (game.atCampfire !== touched){
-        game.atCampfire = touched;
-        openCampfireMenu();
-      }
+      // standing here heals + sets the checkpoint; the rest/forge MENU now only
+      // opens on the interact button (spacebar), via updateDojoStations → dojoActivate.
+      game.atCampfire = touched;
     } else if (game.atCampfire){
       game.atCampfire = null;
     }
@@ -2657,6 +2708,26 @@ function draw(){
 
   // joystick — fixed base visible during play, knob reflects current direction
   if (game.state === STATE.PLAY && SETTINGS.joystick) drawStick();
+  // aim reticle — screen-space crosshair at the cursor (desktop run combat)
+  if (game.state === STATE.PLAY && !game.dojoMode && usingMouse) drawReticle();
+}
+
+function drawReticle(){
+  const ready = aimCd <= 0;
+  ctx.save();
+  ctx.translate(mouse.x, mouse.y);
+  ctx.strokeStyle = ready ? 'rgba(124,232,239,0.85)' : 'rgba(124,232,239,0.35)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0,0,9,0,TAU); ctx.stroke();
+  for (const a of [0, Math.PI/2, Math.PI, -Math.PI/2]){
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*5, Math.sin(a)*5);
+    ctx.lineTo(Math.cos(a)*13, Math.sin(a)*13);
+    ctx.stroke();
+  }
+  ctx.fillStyle = ready ? 'rgba(217,251,255,0.95)' : 'rgba(217,251,255,0.4)';
+  ctx.beginPath(); ctx.arc(0,0,1.6,0,TAU); ctx.fill();
+  ctx.restore();
 }
 
 function drawGround(camX, camY, VW, VH){
@@ -3213,6 +3284,14 @@ function drawShot(s){
     ctx.fillStyle='#0c0814'; ctx.fillRect(-8,-11,16,3); ctx.fillRect(-8,9,16,3);
     ctx.strokeStyle='rgba(0,0,0,0.6)'; ctx.lineWidth=1;
     ctx.beginPath(); ctx.moveTo(-5,-4); ctx.lineTo(5,-4); ctx.moveTo(-5,0); ctx.lineTo(5,0); ctx.moveTo(-5,4); ctx.lineTo(5,4); ctx.stroke();
+  } else if (s.kind==='aimbolt'){   // left-click ki bolt — a bright cyan dart
+    ctx.rotate(s.rot||0);
+    ctx.shadowColor='#7ce8ef'; ctx.shadowBlur=12;
+    ctx.fillStyle='#d9fbff';
+    ctx.beginPath(); ctx.moveTo(11,0); ctx.lineTo(-6,-4); ctx.lineTo(-2,0); ctx.lineTo(-6,4); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(124,232,239,0.5)';   // faint trailing glow
+    ctx.beginPath(); ctx.ellipse(-9,0,8,3,0,0,TAU); ctx.fill();
+    ctx.shadowBlur=0;
   } else { // ki crescent
     ctx.rotate(s.ang); ctx.shadowColor='#4fd6e0'; ctx.shadowBlur=14;
     ctx.fillStyle='rgba(79,214,224,0.55)';
@@ -4325,7 +4404,13 @@ D('dojo-back').onclick = ()=>{
 // the in-scene ENTER button + Enter/Space keys activate the focused station
 D('dojo-interact').onclick = ()=> dojoActivate();
 addEventListener('keydown', e=>{
-  if (game && game.dojoMode && (e.key==='Enter' || e.key===' ' || e.key.toLowerCase()==='e')) dojoActivate();
+  if (e.repeat || !game || game.state !== STATE.PLAY) return;
+  const k = e.key.toLowerCase();
+  if (!(e.key===' ' || e.key==='Enter' || k==='e')) return;
+  // Context-sensitive: interact when standing on something, else dodge-roll.
+  // E / Enter only ever interact; spacebar rolls when there's nothing to use.
+  if (game.interactWith) dojoActivate();
+  else if (e.key===' ' && !game.dojoMode) startRoll();
 });
 // Wipes all META progression (Ryo, upgrades, lifetime stats, armed Pit).
 // SETTINGS (joystick / upgradeMode) are intentionally preserved as
