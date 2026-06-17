@@ -26,25 +26,27 @@ shared telegraph set).
 
 ---
 
-## 2. Redesign enemy flow
+## 2. Redesign enemy flow — ✅ DONE (2026-06-16, "Version A" summoner nests)
 
-**Why:** The world layers two competing pressure systems — time-scaled arena
-spawns *and* a base-defense "marcher lane" that streams enemies down carved
-roads at the Dojo. Late runs read as endless footpads trickling along paths,
-which dilutes pillar #2 ("the swarm is the clock"). The return-road shortcuts
-read as convenience, not a meaningful choice.
+Resolved by adopting the Souls/VS-hybrid pitch (clearable world, no ambient
+spawns):
+- **Cut** the old flow: time-scaled ambient `spawnEnemy`, the 75s world-boss
+  timer, and all marcher/return-road streaming.
+- **Added** `NEST` + `generateNests` / `activateNest` / `summonAdd` /
+  `deactivateNest` / `dissolveHorde` / `resetNests`: dormant summoner nests are
+  strung along the forward roads (depth-scaled). Approach wakes a rooted hooded
+  summoner that conjures a spectral horde (bursts, capped); killing the summoner
+  dissolves its horde; fleeing past the leash puts it back to sleep; resting at
+  a campfire or dying **resets every nest** so ground is re-runnable.
+- Zone **boss buildings** remain as capstone fights (boon + gate).
 
-**Candidate directions:**
-- Collapse to a single, legible pressure source (clean time-scaled swarm), and
-  let cleared zones change *where/what* spawns rather than adding parallel lanes.
-- OR commit to the base-defense identity and make the lanes a real, readable
-  threat (visible wave timers, a Dojo the player actually defends) — but only if
-  that's the game we want.
-- Re-examine marcher routes / return-road streaming
-  (`spawnMarcherFromCamp`, `spawnReturnMarcher`, `campStreamInterval`,
-  `returnStreamInterval`, `campMayStream`) — ~116 lines that may shrink a lot.
-
-**Note:** The new Dojo guardian archer assumes *some* enemy flow toward the
-Dojo to be worth guarding; settle this redesign before tuning the archer.
+**Follow-up (not blocking):**
+- Tuning pass: `NEST` cadence/cap/burst, summoner HP vs. depth, nest spacing —
+  all first-pass guesses; needs a real playtest.
+- Dead code to sweep later: the retired spawners (`spawnEnemy`,
+  `spawnMarcherFromCamp`, `spawnReturnMarcher`, `spawnInterval`,
+  `campStreamInterval`, `returnStreamInterval`, `pointAlongRouteFromEnd`,
+  `campMayStream`, the enemy AI `'march'` branch) are now unreferenced.
+- Boss-fight identity per building type (still a stat block + shared telegraphs).
 
 #LLM-generated

@@ -986,6 +986,7 @@ function enterDojoFromRun(){
 // give a beat of invuln. The run keeps going; the world doesn't reset.
 function respawnAtCheckpoint(){
   if (!game || game.dojoMode) return;
+  resetNests();                       // death resets the world (Souls-style)
   const cp = game.checkpoint || { x: 0, y: 0 };
   player.x = cp.x; player.y = cp.y;
   player.hp = player.maxhp;
@@ -1221,12 +1222,8 @@ function newGame(){
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:player.x+rand(-VW,VW), y:player.y+rand(-VH,VH), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // the tutorial road opens hot — the first camp's column is already
-  // strung along it, lead marchers closing on the Dojo
-  for (const b of game.buildings){
-    if (b.type === 'dojo' || b.shopGroup || !campMayStream(b)) continue;
-    for (let i=0;i<5;i++) spawnMarcherFromCamp(b, 300 + i*160 + rand(-40, 40));
-  }
+  // summoner nests are strung along the roads — dormant until you draw near
+  game.nests = generateNests(game.buildings, game.paths);
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1528,6 +1525,110 @@ function spawnEnemy(boss=false, distOverride=null){
     alertT:0, chargeT:0, chargeCheckT:rand(0,0.6) });
 }
 
+// =====================================================================
+//  SUMMONER NESTS — the Souls/VS hybrid enemy flow.
+//  The world is dotted with dormant summoners along the roads. Walk near one
+//  and it wakes, pumping out a spectral horde (the VS swarm). Cut through the
+//  adds, kill the summoner, and its whole horde vanishes. Flee far enough and
+//  it leashes back to sleep. Nests stay dead until you REST at a campfire.
+// =====================================================================
+let _nid = 1;
+const NEST = {
+  along: 600,      // spacing between nests along a road
+  clearB: 290,     // keep clear of building boss arenas
+  clearDojo: 400,  // safe radius around the Dojo
+  aggro: 320,      // engage distance
+  leash: 760,      // flee past this and the summoner sleeps again
+  addCap: 14,      // max live adds per summoner at once
+  addCd: 0.7,      // seconds between summon pulses
+  addBurst: 2,     // adds conjured per pulse → fills to a real swarm fast
+};
+// place dormant nests at intervals along the forward roads (not return roads)
+function generateNests(buildings, paths){
+  const nests = [], dojo = buildings[0];
+  const ok = (x,y)=>{
+    if (Math.hypot(x-dojo.x, y-dojo.y) < NEST.clearDojo) return false;
+    for (const b of buildings) if (Math.hypot(x-b.x, y-b.y) < NEST.clearB) return false;
+    for (const n of nests) if (Math.hypot(x-n.x, y-n.y) < NEST.along*0.7) return false;
+    return isWalkable(x, y, 26);
+  };
+  for (const e of paths.edges){
+    if (e.isReturn) continue;
+    const pts = e.pts;
+    let dun = NEST.along * 0.5;             // distance until the next drop
+    for (let k=1;k<pts.length;k++){
+      let ax=pts[k-1].x, ay=pts[k-1].y;
+      const bx=pts[k].x, by=pts[k].y;
+      let seg = Math.hypot(bx-ax, by-ay) || 1;
+      const dirx=(bx-ax)/seg, diry=(by-ay)/seg;
+      while (dun <= seg){
+        ax += dirx*dun; ay += diry*dun; seg -= dun;
+        if (ok(ax,ay)) nests.push({ x:ax, y:ay, depth:e.of.depth||1, state:'dormant', summoner:null, _id:_nid++ });
+        dun = NEST.along;
+      }
+      dun -= seg;
+    }
+  }
+  return nests;
+}
+function activateNest(n){
+  n.state = 'active';
+  const d = n.depth;
+  const hp = Math.round((110 + d*60) * (1 + game.t/240));   // mild slow scale by depth+time
+  const s = { x:n.x, y:n.y, r:21, hp, maxhp:hp, speed:0, dmg:14 + d*2,
+    xp:20 + d*5, color:'#6a3aa0', boss:false, summoner:true, nest:n,
+    hit:0, sep:0, state:'chase', sight:9999, callR:0,
+    wDir:0, wTimer:0, wSpeed:0, alertT:0, chargeT:0, chargeCheckT:0,
+    atkCd:99, sumCd: NEST.addCd*0.6 };
+  enemies.push(s); n.summoner = s;
+  shake = Math.max(shake, 5);
+  for (let i=0;i<18;i++){ const a=rand(0,TAU), sp=rand(60,170);
+    fx.push({ kind:'spark', x:n.x, y:n.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.6), c:'#b07ce0' }); }
+}
+// summoner died → its whole horde dissolves
+function dissolveHorde(n, poof){
+  for (const a of enemies){
+    if (a.dead || a.summonedNest !== n._id) continue;
+    a.dead = true;
+    if (poof) for (let i=0;i<5;i++){ const ang=rand(0,TAU), sp=rand(40,110);
+      fx.push({ kind:'spark', x:a.x, y:a.y, vx:Math.cos(ang)*sp, vy:Math.sin(ang)*sp, t:0, life:rand(.2,.45), c:'#b07ce0' }); }
+  }
+}
+function deactivateNest(n){    // leashed — summoner sleeps, horde vanishes
+  if (n.summoner) n.summoner.dead = true;
+  dissolveHorde(n, true);
+  n.state = 'dormant'; n.summoner = null;
+}
+// one summon pulse: conjure a small burst of spectral foes near the summoner
+function summonAdd(s){
+  const n = s.nest; if (!n) return;
+  let live = 0;
+  for (const e of enemies){ if (!e.dead && e.summonedNest === n._id) live++; }
+  const d = n.depth, mul = 1 + d*0.12;
+  let roster = ['footpad'];
+  if (d>=2) roster.push('footpad','ronin');
+  if (d>=3) roster.push('ninja');
+  if (d>=4) roster.push('brute','ninja');
+  for (let k=0; k<NEST.addBurst && live < NEST.addCap; k++, live++){
+    const t = ENEMY_TYPES[pick(roster)];
+    const ang = rand(0,TAU), dist = s.r + 12 + rand(0,30);
+    enemies.push({ x:s.x+Math.cos(ang)*dist, y:s.y+Math.sin(ang)*dist,
+      r:t.r, hp:t.hp*mul, maxhp:t.hp*mul, speed:t.speed*rand(.9,1.12),
+      dmg:t.dmg, xp:Math.max(1, Math.round(t.xp*0.6)), color:t.color, ghost:true,
+      hit:0, boss:false, sep:0, state:'chase', sight:9999, callR:0,
+      wDir:0, wTimer:0, wSpeed:0, alertT:0, chargeT:0, chargeCheckT:rand(0,0.6),
+      atkCd:rand(2.5,4.2), summonedNest:n._id });
+  }
+  for (let i=0;i<6;i++){ const a=rand(0,TAU), sp=rand(40,100);
+    fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.2,.4), c:'#b07ce0' }); }
+}
+// rest at a campfire / death → the world resets: nests sleep, hordes clear
+function resetNests(){
+  if (!game || !game.nests) return;
+  for (const n of game.nests){ n.state = 'dormant'; n.summoner = null; }
+  enemies = enemies.filter(e => e.dummy || !(e.summoner || e.summonedNest !== undefined));
+}
+
 // Approaching a fresh camp pops out its named boss. The marcher stream from
 // the camp continues until the boss is dead — fighting the boss WHILE its
 // camp keeps emitting is the intended pressure.
@@ -1565,12 +1666,6 @@ function checkCampCleared(b){
     openGates(b);                       // the zone beyond this boss unlocks
     if (b.type === 'bandits'){          // razed bandit camps leave a campfire
       game.campfires.push({ x: b.x, y: b.y + 95, r: 60 });
-    }
-    // freshly exposed camps waste no time — their first marchers set out now
-    for (const c of game.buildings){
-      if (c.parent === b && !c.shopGroup && c.state === 'fresh' && campMayStream(c)){
-        for (let i=0;i<3;i++) spawnMarcherFromCamp(c);
-      }
     }
     // special buildings hand you a run-scoped boon DRAFT on clear (you're right
     // there, fresh off the boss fight); only bandit camps drop a Ryo orb.
@@ -1645,6 +1740,7 @@ function damage(e, dmg, kx=0, ky=0){
 function killEnemy(e){
   e.dead = true; game.kills++;
   if (player.lifesteal) player.hp = Math.min(player.maxhp, player.hp + player.lifesteal);  // Bloodpact boon
+  if (e.summoner && e.nest){ e.nest.state = 'dead'; e.nest.summoner = null; dissolveHorde(e.nest, true); }
   if (e.boss) game.bossKills = (game.bossKills||0) + 1;
   if (e.boss) shake = Math.max(shake, 10);
   // ki orbs (boss bursts several)
@@ -2043,41 +2139,29 @@ function update(dt){
   if (P.inv>0) P.inv -= dt;
   if (P.hurt>0) P.hurt -= dt;
 
-  // spawning (skip in dojo — peaceful)
+  // enemy flow (skip in dojo — peaceful). No ambient spawns: pressure comes
+  // from the world's fixed summoner nests + each zone's boss building.
   if (!game.dojoMode){
-    game.spawnAcc += dt;
-    const want = spawnInterval();
-    while (game.spawnAcc >= want){ game.spawnAcc -= want; spawnEnemy(); }
-    game.bossT += dt;
-    if (game.bossT >= 75){ game.bossT = 0; game.bossN++; spawnEnemy(true); }
-    // marchers — every uncleared camp (fresh OR boss-active) emits its own
-    // slow stream toward the dojo. Killing the camp's boss = lane shut off.
-    // Approaching within CAMP_TRIGGER_R of a fresh camp pops its boss out.
-    if (game.buildings){
-      const ci = campStreamInterval();
-      for (const b of game.buildings){
-        if (b.type === 'dojo' || b.state === 'cleared') continue;
-        // approach trigger applies to camps AND shops (both have bosses)
-        if (b.state === 'fresh'){
-          const dx = P.x - b.x, dy = P.y - b.y;
-          if (dx*dx + dy*dy < CAMP_TRIGGER_R * CAMP_TRIGGER_R) spawnCampBoss(b);
+    // building bosses still pop on approach (zone capstones → boon + gate)
+    if (game.buildings) for (const b of game.buildings){
+      if (b.type === 'dojo' || b.state !== 'fresh') continue;
+      const dx = P.x - b.x, dy = P.y - b.y;
+      if (dx*dx + dy*dy < CAMP_TRIGGER_R * CAMP_TRIGGER_R) spawnCampBoss(b);
+    }
+    // summoner nests: wake on approach, summon adds while alive, leash on flee
+    if (game.nests) for (const n of game.nests){
+      const dx = P.x - n.x, dy = P.y - n.y, d2 = dx*dx + dy*dy;
+      if (n.state === 'dormant'){
+        if (d2 < NEST.aggro*NEST.aggro) activateNest(n);
+      } else if (n.state === 'active'){
+        if (!n.summoner || n.summoner.dead){ n.state = 'dead'; n.summoner = null; }
+        else {
+          if (d2 > NEST.leash*NEST.leash) deactivateNest(n);
+          else {
+            n.summoner.sumCd -= dt;
+            if (n.summoner.sumCd <= 0){ n.summoner.sumCd = NEST.addCd*rand(.8,1.2); summonAdd(n.summoner); }
+          }
         }
-        // marcher stream: trap-camps only. Shop buildings ARE the boss
-        // encounter — adding a marcher stream on top made the early game an
-        // unmanageable flood.
-        if (b.shopGroup) continue;
-        // deep camps stay quiet until the bosses between them and the Dojo
-        // have fallen — clearing zones is what wakes the world up
-        if (!campMayStream(b)) continue;
-        b.streamAcc = (b.streamAcc || 0) + dt;
-        while (b.streamAcc >= ci){ b.streamAcc -= ci; spawnMarcherFromCamp(b); }
-      }
-      // opened return roads: tougher marchers pour down the shortcuts home
-      const ri = returnStreamInterval();
-      for (const b of game.buildings){
-        if (!b.returnPts || b.state !== 'cleared') continue;
-        b.returnAcc = (b.returnAcc || 0) + dt;
-        while (b.returnAcc >= ri){ b.returnAcc -= ri; spawnReturnMarcher(b); }
       }
     }
   }
@@ -2098,6 +2182,9 @@ function update(dt){
 
     const dx = P.x-e.x, dy = P.y-e.y, d = Math.hypot(dx,dy) || 1;
 
+    // summoners are rooted — they pump adds (driven from the spawn block) and
+    // only deal contact damage; everyone else runs the wander→chase AI.
+    if (!e.summoner){
     // perception: wandering or marching enemy spots player within sight radius
     if ((e.state === 'wander' || e.state === 'march') && d < e.sight){
       e.state = 'alert'; e.alertT = rand(0.3, 0.5);
@@ -2172,6 +2259,7 @@ function update(dt){
         if (e.atkCd <= 0 && d < startR) startEnemyAttack(e, dx, dy);
       }
     }
+    }   // end !e.summoner (rooted)
 
     if (d < e.r + P.r){
       if (hitPlayer(e.dmg)) return;
@@ -2401,9 +2489,7 @@ function update(dt){
     if (e.dummy) return true;
     if (e.dead) return false;
     if (e.boss) return true;
-    // marchers always persist — they originate from far across the map and
-    // need a long walk to reach the dojo; the archer/player eventually finish them
-    if (e.state === 'march') return true;
+    if (e.summoner) return true;          // fixed world anchors — never cull
     const dx = e.x - player.x, dy = e.y - player.y;
     return dx*dx + dy*dy < cullR2;
   });
@@ -2722,6 +2808,7 @@ function openBuildingDraft(kind){
 function openCampfireMenu(){
   if (!game || game.dojoMode) return;
   game.state = STATE.PAUSED;
+  resetNests();                      // resting restores the world's summoners
   player.hp = player.maxhp;          // a rest fully restores
   refreshCampfireMenu();
   showOnly(elCampfire);
@@ -2828,6 +2915,8 @@ function draw(){
   // ki orbs
   for (const o of orbs) drawOrb(o);
 
+  // dormant summoner nests — visible markers so you spot them while exploring
+  if (game.nests) for (const n of game.nests){ if (n.state === 'dormant') drawNest(n); }
   // enemies
   // telegraphed-attack ground markers (under the enemies that cast them)
   for (const e of enemies){ if (e.windT > 0 && e.curAtk && e.curAtk.type === 'tele') drawTelegraph(e); }
@@ -3268,9 +3357,55 @@ function drawTelegraph(e){
   ctx.restore();
 }
 
+// dormant nest marker — a small totem with a glowing sigil so you spot summoner
+// sites while exploring (Souls-style "there's something up ahead")
+function drawNest(n){
+  ctx.save(); ctx.translate(n.x, n.y);
+  const t = game.t || 0;
+  ctx.globalAlpha = 0.75;
+  ctx.strokeStyle = 'rgba(140,100,190,0.5)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 4, 20, 0, TAU); ctx.stroke();
+  ctx.fillStyle = '#241634';
+  ctx.beginPath(); ctx.moveTo(-6,6); ctx.lineTo(-4,-16); ctx.lineTo(4,-16); ctx.lineTo(6,6); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = `rgba(176,124,224,${0.4 + 0.35*Math.sin(t*2)})`;
+  ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+// active summoner — a floating hooded conjurer over a turning rune circle
+function drawSummoner(e){
+  ctx.save(); ctx.translate(e.x, e.y);
+  const t = game.t || 0, flash = e.hit>0, bob = Math.sin(t*3)*2;
+  // ground rune circle (pulses + slowly rotates)
+  ctx.strokeStyle = `rgba(176,124,224,${0.45 + 0.3*Math.sin(t*4)})`; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, 6, e.r*1.7, 0, TAU); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0, 6, e.r*1.2, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(176,124,224,0.4)';
+  for (let i=0;i<6;i++){ const a = t*0.6 + i/6*TAU;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*e.r*1.2, 6+Math.sin(a)*e.r*0.6);
+    ctx.lineTo(Math.cos(a)*e.r*1.7, 6+Math.sin(a)*e.r*0.85); ctx.stroke(); }
+  // robed body
+  ctx.fillStyle = flash ? '#fff' : '#3a2150';
+  ctx.beginPath(); ctx.moveTo(0, -e.r + bob);
+  ctx.quadraticCurveTo(e.r, e.r*0.4 + bob, e.r*0.7, e.r + bob);
+  ctx.lineTo(-e.r*0.7, e.r + bob);
+  ctx.quadraticCurveTo(-e.r, e.r*0.4 + bob, 0, -e.r + bob); ctx.fill();
+  // hood + glowing eyes
+  ctx.fillStyle = flash ? '#fff' : '#6a3aa0';
+  ctx.beginPath(); ctx.arc(0, -e.r*0.5 + bob, e.r*0.5, 0, TAU); ctx.fill();
+  if (!flash){ ctx.fillStyle = '#d9b3ff';
+    ctx.beginPath(); ctx.arc(-e.r*0.18, -e.r*0.5+bob, e.r*0.1, 0, TAU);
+    ctx.arc(e.r*0.18, -e.r*0.5+bob, e.r*0.1, 0, TAU); ctx.fill(); }
+  // healthbar
+  ctx.fillStyle = '#000'; ctx.fillRect(-e.r, -e.r*1.8, e.r*2, 4);
+  ctx.fillStyle = '#b07ce0'; ctx.fillRect(-e.r, -e.r*1.8, e.r*2*Math.max(0, e.hp/e.maxhp), 4);
+  ctx.restore();
+}
 function drawEnemy(e){
   if (e.dummy){ drawDummy(e); return; }
+  if (e.summoner){ drawSummoner(e); return; }
   ctx.save(); ctx.translate(e.x,e.y);
+  if (e.ghost) ctx.globalAlpha = 0.8;   // spectral adds are translucent
   const flash = e.hit>0;
   const charging = e.chargeT > 0;
   // charge halo behind body
@@ -4615,6 +4750,7 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
     drawArcher, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
     newGame, startDojo, openBuildingDraft, BUILDING_BOONS, DOJO_STATIONS,
+    resetNests, NEST, get nests(){ return game && game.nests; },
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
     get enemies(){return enemies},
