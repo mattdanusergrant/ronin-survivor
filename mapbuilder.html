@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>Ronin Survivor — Map Builder</title>
+<style>
+  /* #LLM-generated */
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body { height:100%; overflow:hidden; background:#0d0b10; color:#e8e0d0;
+              font-family:-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+  canvas { display:block; position:fixed; inset:0; }
+  .bar { position:fixed; top:0; left:0; right:0; display:flex; gap:8px; align-items:center;
+         padding:8px 12px; background:rgba(13,11,16,0.92); border-bottom:1px solid #3a3325; z-index:10; flex-wrap:wrap; }
+  .bar h1 { font-size:13px; letter-spacing:2px; color:#e7b53b; margin-right:6px; white-space:nowrap; }
+  .bar input[type=text] { background:#1a1620; border:1px solid #3a3325; color:#e8e0d0;
+         padding:5px 8px; border-radius:6px; width:150px; font-size:13px; }
+  button { background:#241f2b; border:1px solid #4a4133; color:#e8e0d0; padding:6px 12px;
+           border-radius:6px; font-size:13px; cursor:pointer; }
+  button:hover { background:#322a3c; }
+  button.primary { background:#5a4520; border-color:#e7b53b; color:#ffd97a; }
+  button.active { background:#5a4520; border-color:#e7b53b; }
+  .palette { position:fixed; left:10px; top:60px; display:flex; flex-direction:column; gap:6px; z-index:10; }
+  .palette button { text-align:left; min-width:150px; }
+  .panel { position:fixed; left:10px; bottom:44px; background:rgba(20,17,26,0.95); border:1px solid #4a4133;
+           border-radius:10px; padding:12px 14px; z-index:10; min-width:230px; font-size:13px; }
+  .panel h2 { font-size:14px; color:#ffd97a; margin-bottom:8px; }
+  .panel label { display:flex; gap:6px; align-items:center; margin:6px 0; cursor:pointer; }
+  .panel .row { display:flex; gap:6px; margin-top:10px; }
+  .panel select { background:#1a1620; border:1px solid #3a3325; color:#e8e0d0; padding:4px; border-radius:5px; }
+  .status { position:fixed; left:0; right:0; bottom:0; padding:6px 12px; font-size:12px; z-index:10;
+            background:rgba(13,11,16,0.92); border-top:1px solid #3a3325; max-height:96px; overflow-y:auto; }
+  .status .warn { color:#e7a53b; }
+  .status .ok { color:#7ad97a; }
+  .status .bad { color:#ff7a6a; }
+  .help { position:fixed; right:10px; top:60px; background:rgba(20,17,26,0.95); border:1px solid #4a4133;
+          border-radius:10px; padding:12px 14px; z-index:10; max-width:280px; font-size:12px; line-height:1.5; }
+  .help b { color:#ffd97a; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div class="bar">
+  <h1>⛩️ MAP BUILDER</h1>
+  <input id="mapname" type="text" placeholder="map name" value="untitled">
+  <button id="btn-new">New</button>
+  <button id="btn-import">Import</button>
+  <button id="btn-export">Export</button>
+  <button id="btn-check">✓ Check</button>
+  <button id="btn-play" class="primary">▶ Playtest</button>
+  <button id="btn-help">?</button>
+  <input id="file" type="file" accept=".json" class="hidden">
+</div>
+
+<div class="palette" id="palette"></div>
+<div class="panel hidden" id="inspector"></div>
+
+<div class="help hidden" id="help">
+  <b>How it works</b><br>
+  The Dojo is pinned at the center. Every other building is a zone boss chained
+  to a parent — its road is barricaded until the parent falls. Branching is
+  allowed: give one parent several children.<br><br>
+  <b>Place</b> — pick a type on the left, then click the map. New buildings
+  chain to the selected building.<br>
+  <b>Select / move</b> — click a building; drag to move it.<br>
+  <b>Re-chain</b> — select a building, press <i>Set parent</i>, click the new parent.<br>
+  <b>Pan / zoom</b> — drag empty space / mouse wheel.<br>
+  <b>Check</b> — runs the real world generator and verifies every gate seal.<br>
+  <b>Playtest</b> — saves the map and opens the game with it.<br><br>
+  Keep buildings ~1100+ apart (corridors need solid forest between zones) and
+  inside the dashed circle.
+</div>
+
+<div class="status" id="status"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   RONIN SURVIVOR — MAP BUILDER. Edits the zone graph (buildings, parent
+   links, road flags) and exports a spec the game loads via
+   index.html?map=custom (localStorage key 'ronin-custom-map').
+   Vanilla JS + Canvas, no deps. #LLM-generated
+   ===================================================================== */
+
+// ---------- building catalogue (display subset of the game's table) ----------
+const TYPES = {
+  dojo:    { name:'The Dojo',         ico:'🏯', color:'#7a5b2a' },
+  bandits: { name:'Bandit Camp',      ico:'🏚️', color:'#5a3530' },
+  smithy:  { name:'Smithy',           ico:'🗡️', color:'#b58a3a' },
+  shrine:  { name:'Forgotten Shrine', ico:'⛩️', color:'#2a8f97' },
+  vigor:   { name:'Hall of Vigor',    ico:'🛡️', color:'#5a7a9a' },
+  cache:   { name:"Ronin's Cache",    ico:'📦', color:'#e7b53b' },
+  spirit:  { name:'Spirit Pool',      ico:'⚡', color:'#4fa098' },
+};
+const PLACEABLE = ['bandits','smithy','shrine','vigor','cache','spirit'];
+const BUILD_R = 3500;            // placement limit — forest edge is MAZE.R
+
+/* =====================================================================
+   WORLD GENERATION — copied from index.html; keep in sync. The builder
+   runs the genuine pipeline so "Check" means "the game will accept this".
+   ===================================================================== */
+const MAZE = { R:4000, HW:85, CLEAR_BUILDING:230, CLEAR_CAMPFIRE:150, STEP:120, RMIN:105, RMAX:145 };
+const TAU = Math.PI*2;
+const rand = (a,b)=>a+Math.random()*(b-a);
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+
+function distToSeg(px, py, s){
+  const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+  const l2 = dx*dx + dy*dy;
+  const t = l2 ? clamp(((px - s.x1)*dx + (py - s.y1)*dy) / l2, 0, 1) : 0;
+  return Math.hypot(px - (s.x1 + dx*t), py - (s.y1 + dy*t));
+}
+function windPath(ax, ay, bx, by){
+  const len = Math.hypot(bx-ax, by-ay);
+  const ux = (bx-ax)/len, uy = (by-ay)/len, nx = -uy, ny = ux;
+  const stub = Math.min(550, len*0.3);
+  const pts = [{x:ax, y:ay}, {x:ax+ux*stub, y:ay+uy*stub}];
+  const inner = len - 2*stub;
+  const n = Math.max(1, Math.round(inner/450));
+  for (let i=1; i<n; i++){
+    const t = i/n, off = rand(-1, 1) * Math.min(240, inner*0.22);
+    pts.push({ x: ax+ux*(stub+inner*t) + nx*off, y: ay+uy*(stub+inner*t) + ny*off });
+  }
+  pts.push({x:bx-ux*stub, y:by-uy*stub});
+  pts.push({x:bx, y:by});
+  return pts;
+}
+function pathKeepsItsDistance(pts, b, buildings, edges){
+  for (let k=1; k<pts.length; k++){
+    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1, n = Math.ceil(L/80);
+    for (let s=0; s<=n; s++){
+      const x = a.x+(c.x-a.x)*s/n, y = a.y+(c.y-a.y)*s/n;
+      if (Math.hypot(x-b.x, y-b.y) < 420 || Math.hypot(x-b.parent.x, y-b.parent.y) < 420) continue;
+      for (const o of buildings)
+        if (o !== b && o !== b.parent && Math.hypot(o.x-x, o.y-y) < 520) return false;
+      for (const e of edges)
+        for (let m=1; m<e.pts.length; m++)
+          if (distToSeg(x, y, { x1:e.pts[m-1].x, y1:e.pts[m-1].y, x2:e.pts[m].x, y2:e.pts[m].y }) < 500) return false;
+    }
+  }
+  return true;
+}
+function returnRoadOK(pts, b, dojo, buildings, edges){
+  for (let k=1; k<pts.length; k++){
+    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1, n = Math.ceil(L/80);
+    for (let s=0; s<=n; s++){
+      const x = a.x+(c.x-a.x)*s/n, y = a.y+(c.y-a.y)*s/n;
+      if (Math.hypot(x-b.x, y-b.y) < 420 || Math.hypot(x-dojo.x, y-dojo.y) < 380) continue;
+      for (const o of buildings)
+        if (o !== b && o !== dojo && Math.hypot(o.x-x, o.y-y) < 520) return false;
+      for (const e of edges)
+        for (let m=1; m<e.pts.length; m++)
+          if (distToSeg(x, y, { x1:e.pts[m-1].x, y1:e.pts[m-1].y, x2:e.pts[m].x, y2:e.pts[m].y }) < 500) return false;
+    }
+  }
+  return true;
+}
+function generatePaths(buildings){
+  const edges = [], segs = [];
+  const addSegs = pts => { for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y }); };
+  for (const b of buildings){
+    if (!b.parent) continue;
+    let pts = null;
+    if (b.tutorial) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];
+    else {
+      for (let t=0; t<12 && !pts; t++){
+        const cand = windPath(b.parent.x, b.parent.y, b.x, b.y);
+        if (pathKeepsItsDistance(cand, b, buildings, edges)) pts = cand;
+      }
+      if (!pts) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];
+    }
+    b.edgePts = pts;
+    edges.push({ pts, of: b });
+    addSegs(pts);
+  }
+  const dojo = buildings[0];
+  for (const b of buildings){
+    if (!b.hasReturn) continue;
+    let pts = null;
+    for (let t=0; t<12 && !pts; t++){
+      const cand = windPath(b.x, b.y, dojo.x, dojo.y);
+      if (returnRoadOK(cand, b, dojo, buildings, edges)) pts = cand;
+    }
+    if (!pts) pts = [{x:b.x, y:b.y}, {x:dojo.x, y:dojo.y}];
+    b.returnPts = pts;
+    edges.push({ pts, of: b, isReturn: true });
+    addSegs(pts);
+  }
+  return { edges, segs };
+}
+function walkAlong(pts, dist){
+  let remain = dist;
+  for (let k=1; k<pts.length; k++){
+    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
+    if (remain <= L){
+      const t = remain/L;
+      return { x:a.x+(c.x-a.x)*t, y:a.y+(c.y-a.y)*t, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
+    }
+    remain -= L;
+  }
+  const a = pts[pts.length-2], c = pts[pts.length-1], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
+  return { x:c.x, y:c.y, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
+}
+function generateGates(buildings){
+  const gates = [];
+  const barricade = (pts, owner, along) => {
+    const p = walkAlong(pts, along);
+    for (const off of [-150, -50, 50, 150])
+      gates.push({ type:'gate', x:p.x + p.nx*off, y:p.y + p.ny*off, r:62, owner });
+  };
+  for (const b of buildings){
+    if (b.parent && b.parent.type !== 'dojo') barricade(b.edgePts, b.parent, MAZE.CLEAR_BUILDING + 150);
+    if (b.returnPts) barricade(b.returnPts, b, MAZE.CLEAR_BUILDING + 320);
+  }
+  return gates;
+}
+function generateObstacles(buildings, paths){
+  const out = [];
+  const { R, STEP, HW } = MAZE;
+  for (let gy=-R; gy<=R; gy+=STEP){
+    for (let gx=-R; gx<=R; gx+=STEP){
+      const x = gx + rand(-14,14), y = gy + rand(-14,14);
+      if (x*x + y*y > R*R) continue;
+      const r = rand(MAZE.RMIN, MAZE.RMAX);
+      if (buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + r)) continue;
+      let onPath = false;
+      for (const s of paths.segs){ if (distToSeg(x, y, s) < HW + r){ onPath = true; break; } }
+      if (onPath) continue;
+      out.push({ type: Math.random() < 0.15 ? 'lake' : 'thicket', x, y, r });
+    }
+  }
+  return out;
+}
+const OBGRID_CELL = 320;
+function makeFlood(obstacles){
+  const R = MAZE.R, CELL = 44, N = Math.ceil(2*R/CELL);
+  const grid = new Map();
+  for (const o of obstacles){
+    const x0 = Math.floor((o.x-o.r)/OBGRID_CELL), x1 = Math.floor((o.x+o.r)/OBGRID_CELL);
+    const y0 = Math.floor((o.y-o.r)/OBGRID_CELL), y1 = Math.floor((o.y+o.r)/OBGRID_CELL);
+    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
+      const k = cx + ',' + cy;
+      let c = grid.get(k);
+      if (!c) grid.set(k, c = []);
+      c.push(o);
+    }
+  }
+  const open = new Set();
+  const walkable = (x, y) => {
+    const x0 = Math.floor((x-14)/OBGRID_CELL), x1 = Math.floor((x+14)/OBGRID_CELL);
+    const y0 = Math.floor((y-14)/OBGRID_CELL), y1 = Math.floor((y+14)/OBGRID_CELL);
+    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
+      const cell = grid.get(cx + ',' + cy);
+      if (!cell) continue;
+      for (const o of cell){
+        if (o.type === 'gate' && open.has(o.owner)) continue;
+        const dx = x-o.x, dy = y-o.y, m = o.r + 13;
+        if (dx*dx + dy*dy < m*m) return false;
+      }
+    }
+    return true;
+  };
+  const flood = () => {
+    const seen = new Uint8Array(N*N);
+    const c0 = Math.floor(R/CELL);
+    const stack = [c0*N + c0];
+    seen[stack[0]] = 1;
+    while (stack.length){
+      const i = stack.pop(), cx = i % N, cy = (i / N) | 0;
+      for (let d=0; d<4; d++){
+        const nx = cx + (d===0) - (d===1), ny = cy + (d===2) - (d===3);
+        if (nx<0 || ny<0 || nx>=N || ny>=N) continue;
+        const j = ny*N + nx;
+        if (seen[j]) continue;
+        const wx = nx*CELL - R + CELL/2, wy = ny*CELL - R + CELL/2;
+        if (wx*wx + wy*wy > R*R) continue;
+        if (!walkable(wx, wy)) continue;
+        seen[j] = 1; stack.push(j);
+      }
+    }
+    return seen;
+  };
+  const reach = (seen, b) => {
+    const cx = Math.floor((b.x+R)/CELL), cy = Math.floor((b.y+R)/CELL);
+    for (let dy=-3; dy<=3; dy++) for (let dx=-3; dx<=3; dx++){
+      const nx = cx+dx, ny = cy+dy;
+      if (nx>=0 && ny>=0 && nx<N && ny<N && seen[ny*N+nx]) return true;
+    }
+    return false;
+  };
+  return { open, flood, reach };
+}
+// Branching-aware seal check — same logic as the game's customWorldIsSound,
+// but reports which building failed and why.
+function soundCheck(buildings, obstacles){
+  const { open, flood, reach } = makeFlood(obstacles);
+  for (const b of buildings){
+    if (!b.parent) continue;
+    open.clear();
+    for (let u = b.parent; u; u = u.parent) open.add(u);
+    if (!reach(flood(), b))
+      return { ok:false, why:`${b.name} is unreachable even with its whole chain cleared` };
+    if (b.parent.type !== 'dojo'){
+      open.clear();
+      for (const o of buildings) if (o !== b && o !== b.parent) open.add(o);
+      if (reach(flood(), b))
+        return { ok:false, why:`${b.name} can be reached before ${b.parent.name} falls — a gate seal leaks` };
+    }
+  }
+  return { ok:true };
+}
+
+/* =====================================================================
+   EDITOR STATE
+   ===================================================================== */
+// node: { type, x, y, parent (index), straight, hasReturn }
+// nodes[0] is always the Dojo at the origin; parents precede children.
+let nodes = [];
+let selected = 0;        // index into nodes
+let placing = null;      // type currently being placed, or null
+let linking = false;     // next building click sets the selected node's parent
+let preview = null;      // { obstacles, edges, gates } from the last Check
+let checkMsg = null;     // { cls, text } from the last Check
+
+const cam = { x:0, y:0, scale:0.11 };
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+let W = 0, H = 0, DPR = 1;
+
+const D = id => document.getElementById(id);
+
+function starterMap(){
+  return [
+    { type:'dojo',    x:0,   y:0, parent:-1, straight:false, hasReturn:false },
+    { type:'bandits', x:900, y:0, parent:0,  straight:true,  hasReturn:false },
+  ];
+}
+
+function depthOf(i){ let d=0; for (let u=i; nodes[u].parent>=0; u=nodes[u].parent) d++; return d; }
+function label(i){ return `${TYPES[nodes[i].type].name} (zone ${depthOf(i)})`; }
+
+// Convert editor nodes to the gen-object shape the copied pipeline expects.
+function toGen(){
+  const bs = nodes.map((n,i) => ({
+    type:n.type, name:TYPES[n.type].name,
+    x: i ? n.x : 0, y: i ? n.y : 0, r:46,
+  }));
+  nodes.forEach((n,i) => {
+    if (i === 0) return;
+    bs[i].parent = bs[n.parent];
+    if (n.straight) bs[i].tutorial = true;
+    if (n.hasReturn) bs[i].hasReturn = true;
+  });
+  return bs;
+}
+function spec(){
+  return {
+    version: 1,
+    name: D('mapname').value.trim() || 'untitled',
+    buildings: nodes.map((n,i) => i === 0
+      ? { type:'dojo', x:0, y:0 }
+      : { type:n.type, x:Math.round(n.x), y:Math.round(n.y), parent:n.parent,
+          straight:!!n.straight, hasReturn:!!n.hasReturn }),
+  };
+}
+function loadSpec(s){
+  if (!s || !Array.isArray(s.buildings) || s.buildings[0]?.type !== 'dojo') return false;
+  for (let i=1; i<s.buildings.length; i++){
+    const e = s.buildings[i];
+    if (!TYPES[e.type] || e.type === 'dojo' || !(e.parent >= 0 && e.parent < i)) return false;
+  }
+  nodes = s.buildings.map((e,i) => i === 0
+    ? { type:'dojo', x:0, y:0, parent:-1, straight:false, hasReturn:false }
+    : { type:e.type, x:e.x, y:e.y, parent:e.parent, straight:!!e.straight, hasReturn:!!e.hasReturn });
+  D('mapname').value = s.name || 'untitled';
+  selected = 0; placing = null; linking = false; preview = null; checkMsg = null;
+  return true;
+}
+
+// Re-emit nodes in DFS order from the Dojo so parents always precede children
+// (the invariant both the spec format and the game loader rely on).
+function normalize(){
+  const kids = nodes.map(() => []);
+  nodes.forEach((n,i) => { if (i) kids[n.parent].push(i); });
+  const order = [0];
+  for (let q=0; q<order.length; q++) for (const k of kids[order[q]]) order.push(k);
+  const remap = [];
+  order.forEach((old, ni) => remap[old] = ni);
+  nodes = order.map(old => {
+    const n = { ...nodes[old] };
+    if (n.parent >= 0) n.parent = remap[n.parent];
+    return n;
+  });
+  selected = selected == null ? null : remap[selected];
+}
+
+const AUTOSAVE_KEY = 'ronin-mapbuilder-autosave';
+function changed(){
+  preview = null; checkMsg = null;
+  try { localStorage.setItem(AUTOSAVE_KEY, JSON.stringify(spec())); } catch {}
+  refresh();
+}
+
+/* =====================================================================
+   LIVE WARNINGS — cheap geometric checks on every change
+   ===================================================================== */
+function liveWarnings(){
+  const w = [];
+  for (let i=0; i<nodes.length; i++){
+    const a = nodes[i];
+    const ax = i ? a.x : 0, ay = i ? a.y : 0;
+    if (Math.hypot(ax, ay) > BUILD_R) w.push(`${label(i)} is outside the buildable area`);
+    if (i){
+      const p = nodes[a.parent], px = a.parent ? p.x : 0, py = a.parent ? p.y : 0;
+      if (Math.hypot(ax-px, ay-py) < 800) w.push(`${label(i)} is too close to its parent — no room for the gate`);
+      if (a.hasReturn && Math.hypot(ax, ay) < 1000) w.push(`${label(i)}'s return road is too short`);
+    }
+    for (let j=i+1; j<nodes.length; j++){
+      if (nodes[j].parent === i || (i > 0 && nodes[i].parent === j)) continue;
+      const bx = nodes[j].x, by = nodes[j].y;
+      if (Math.hypot(ax-bx, ay-by) < 1050)
+        w.push(`${label(i)} and ${label(j)} are close — corridors may merge and leak`);
+    }
+  }
+  return w;
+}
+
+/* =====================================================================
+   CHECK / PLAYTEST / IMPORT / EXPORT
+   ===================================================================== */
+function runCheck(done){
+  setStatus([{ cls:'', text:'Checking… (runs the real world generator)' }]);
+  setTimeout(() => {
+    let result = null, lastWorld = null;
+    for (let attempt=0; attempt<4; attempt++){
+      const bs = toGen();
+      const paths = generatePaths(bs);
+      const obstacles = generateObstacles(bs, paths);
+      obstacles.push(...generateGates(bs));
+      lastWorld = { obstacles, edges: paths.edges };
+      result = soundCheck(bs, obstacles);
+      if (result.ok){ result.attempt = attempt+1; break; }
+    }
+    preview = lastWorld;
+    checkMsg = result.ok
+      ? { cls:'ok', text:`✓ Map is sound (attempt ${result.attempt}/4) — gates seal, every zone reachable in order.` }
+      : { cls:'bad', text:`✗ ${result.why}. Tried 4 generations — move buildings farther apart.` };
+    refresh();
+    if (done) done(result.ok);
+  }, 30);
+}
+
+D('btn-check').onclick = () => runCheck();
+D('btn-play').onclick = () => {
+  const go = () => {
+    try { localStorage.setItem('ronin-custom-map', JSON.stringify(spec())); } catch {}
+    window.open('index.html?map=custom', '_blank');
+  };
+  if (checkMsg && checkMsg.cls === 'ok') go();
+  else runCheck(ok => { if (ok || confirm('Map failed the soundness check — playtest anyway?')) go(); });
+};
+D('btn-new').onclick = () => {
+  if (!confirm('Start a new map? Unsaved work is kept only in this browser.')) return;
+  nodes = starterMap(); selected = 1; changed();
+};
+D('btn-export').onclick = () => {
+  const blob = new Blob([JSON.stringify(spec(), null, 2)], { type:'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (D('mapname').value.trim() || 'map') + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+D('btn-import').onclick = () => D('file').click();
+D('file').onchange = e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  f.text().then(t => {
+    try {
+      if (loadSpec(JSON.parse(t))) changed();
+      else setStatus([{ cls:'bad', text:'Import failed — not a valid map file.' }]);
+    } catch { setStatus([{ cls:'bad', text:'Import failed — not valid JSON.' }]); }
+  });
+  e.target.value = '';
+};
+D('btn-help').onclick = () => D('help').classList.toggle('hidden');
+
+/* =====================================================================
+   PALETTE + INSPECTOR
+   ===================================================================== */
+function buildPalette(){
+  const el = D('palette');
+  el.innerHTML = '';
+  for (const t of PLACEABLE){
+    const b = document.createElement('button');
+    b.textContent = `${TYPES[t].ico} ${TYPES[t].name}`;
+    b.onclick = () => { placing = placing === t ? null : t; linking = false; refresh(); };
+    b.dataset.type = t;
+    el.appendChild(b);
+  }
+}
+function refreshPalette(){
+  for (const b of D('palette').children)
+    b.classList.toggle('active', b.dataset.type === placing);
+}
+
+function refreshInspector(){
+  const el = D('inspector');
+  if (selected == null){ el.classList.add('hidden'); return; }
+  el.classList.remove('hidden');
+  const n = nodes[selected];
+  if (selected === 0){
+    el.innerHTML = `<h2>🏯 The Dojo</h2><div>Pinned at the center of the map.</div>`;
+    return;
+  }
+  const typeOpts = PLACEABLE.map(t =>
+    `<option value="${t}" ${t===n.type?'selected':''}>${TYPES[t].ico} ${TYPES[t].name}</option>`).join('');
+  el.innerHTML = `
+    <h2>${TYPES[n.type].ico} ${TYPES[n.type].name} — zone ${depthOf(selected)}</h2>
+    <div>parent: ${TYPES[nodes[n.parent].type].ico} ${TYPES[nodes[n.parent].type].name}</div>
+    <label><select id="ins-type">${typeOpts}</select></label>
+    <label><input type="checkbox" id="ins-straight" ${n.straight?'checked':''}> Straight road from parent</label>
+    <label><input type="checkbox" id="ins-return" ${n.hasReturn?'checked':''}> Return road home (enemy lane)</label>
+    <div class="row">
+      <button id="ins-link" ${linking?'class="active"':''}>${linking?'Click new parent…':'Set parent'}</button>
+      <button id="ins-del">Delete</button>
+    </div>`;
+  D('ins-type').onchange = e => { n.type = e.target.value; changed(); };
+  D('ins-straight').onchange = e => { n.straight = e.target.checked; changed(); };
+  D('ins-return').onchange = e => { n.hasReturn = e.target.checked; changed(); };
+  D('ins-link').onclick = () => { linking = !linking; placing = null; refresh(); };
+  D('ins-del').onclick = () => {
+    const dead = selected;
+    for (const m of nodes) if (m.parent === dead) m.parent = nodes[dead].parent;
+    for (const m of nodes) if (m.parent > dead) m.parent--;
+    nodes.splice(dead, 1);
+    selected = 0; linking = false;
+    normalize(); changed();
+  };
+}
+
+function setStatus(items){
+  D('status').innerHTML = items.map(i => `<span class="${i.cls}">${i.text}</span>`).join('<br>');
+}
+function refreshStatus(){
+  const items = [];
+  if (checkMsg) items.push(checkMsg);
+  for (const w of liveWarnings()) items.push({ cls:'warn', text:'⚠ ' + w });
+  if (!items.length) items.push({ cls:'', text:
+    `${nodes.length-1} building${nodes.length===2?'':'s'} — place, drag, chain; then Check.` });
+  setStatus(items);
+}
+
+/* =====================================================================
+   CANVAS — render + interaction
+   ===================================================================== */
+function resize(){
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W*DPR; cv.height = H*DPR;
+  draw();
+}
+window.addEventListener('resize', resize);
+
+const toWorld = (sx, sy) => ({ x:(sx - W/2)/cam.scale + cam.x, y:(sy - H/2)/cam.scale + cam.y });
+
+function draw(){
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#0d0b10';
+  ctx.fillRect(0, 0, W, H);
+  ctx.translate(W/2, H/2);
+  ctx.scale(cam.scale, cam.scale);
+  ctx.translate(-cam.x, -cam.y);
+  const px = v => v/cam.scale;           // constant-on-screen sizes
+
+  // forest edge + buildable boundary + distance rings
+  ctx.strokeStyle = '#2a2520'; ctx.lineWidth = px(1);
+  for (const r of [1000, 2000, 3000]){ ctx.beginPath(); ctx.arc(0,0,r,0,TAU); ctx.stroke(); }
+  ctx.strokeStyle = '#4a4133'; ctx.setLineDash([px(8), px(8)]);
+  ctx.beginPath(); ctx.arc(0,0,BUILD_R,0,TAU); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = '#5a3530'; ctx.lineWidth = px(2);
+  ctx.beginPath(); ctx.arc(0,0,MAZE.R,0,TAU); ctx.stroke();
+
+  // forest preview from the last Check
+  if (preview){
+    ctx.fillStyle = 'rgba(30,42,28,0.55)';
+    for (const o of preview.obstacles){
+      if (o.type === 'gate') continue;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fill();
+    }
+  }
+
+  // roads: wound polylines if previewed, straight hints otherwise
+  const roads = preview ? preview.edges : null;
+  if (roads){
+    for (const e of roads){
+      ctx.strokeStyle = e.isReturn ? 'rgba(79,160,152,0.5)' : 'rgba(180,150,100,0.5)';
+      ctx.lineWidth = MAZE.HW*2;
+      ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      if (e.isReturn) ctx.setLineDash([120, 70]);
+      ctx.beginPath();
+      e.pts.forEach((p,k) => k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y));
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  } else {
+    for (let i=1; i<nodes.length; i++){
+      const n = nodes[i], p = nodes[n.parent];
+      ctx.strokeStyle = n.straight ? 'rgba(232,224,208,0.7)' : 'rgba(180,150,100,0.55)';
+      ctx.lineWidth = px(n.straight ? 2.5 : 1.5);
+      ctx.beginPath(); ctx.moveTo(p.parent < 0 ? 0 : p.x, p.parent < 0 ? 0 : p.y); ctx.lineTo(n.x, n.y); ctx.stroke();
+      if (n.hasReturn){
+        ctx.strokeStyle = 'rgba(79,160,152,0.7)'; ctx.lineWidth = px(1.5);
+        ctx.setLineDash([px(7), px(5)]);
+        ctx.beginPath(); ctx.moveTo(n.x, n.y); ctx.lineTo(0, 0); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+
+  // gates from the preview
+  if (preview){
+    ctx.fillStyle = '#b58a3a';
+    for (const o of preview.obstacles){
+      if (o.type !== 'gate') continue;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r*0.7, 0, TAU); ctx.fill();
+    }
+  }
+
+  // buildings
+  for (let i=0; i<nodes.length; i++){
+    const n = nodes[i], cfg = TYPES[n.type];
+    const x = i ? n.x : 0, y = i ? n.y : 0;
+    const r = Math.max(MAZE.CLEAR_BUILDING*0.45, px(18));
+    ctx.fillStyle = cfg.color;
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+    if (i === selected){
+      ctx.strokeStyle = '#ffd97a'; ctx.lineWidth = px(3);
+      ctx.beginPath(); ctx.arc(x, y, r + px(4), 0, TAU); ctx.stroke();
+    }
+    ctx.font = `${px(20)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(cfg.ico, x, y);
+    ctx.font = `${px(11)}px sans-serif`;
+    ctx.fillStyle = '#e8e0d0';
+    ctx.fillText(i ? `${cfg.name} · z${depthOf(i)}` : cfg.name, x, y + r + px(12));
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+function refresh(){ refreshPalette(); refreshInspector(); refreshStatus(); draw(); }
+
+// hit-test in world units, generous to stay clickable when zoomed out
+function hitBuilding(wx, wy){
+  const r = Math.max(MAZE.CLEAR_BUILDING*0.45, 18/cam.scale) + 10/cam.scale;
+  for (let i=nodes.length-1; i>=0; i--){
+    const x = i ? nodes[i].x : 0, y = i ? nodes[i].y : 0;
+    if (Math.hypot(wx-x, wy-y) < r) return i;
+  }
+  return null;
+}
+
+let drag = null;   // { mode:'pan'|'move', ... }
+cv.addEventListener('pointerdown', e => {
+  cv.setPointerCapture(e.pointerId);
+  const w = toWorld(e.clientX, e.clientY);
+  const hit = hitBuilding(w.x, w.y);
+  if (linking && selected != null && hit != null){
+    // cycle test: climb from the candidate; passing through the selected
+    // node means the candidate is the node itself or one of its descendants
+    let ok = true, u = hit;
+    while (u >= 0){ if (u === selected){ ok = false; break; } u = nodes[u].parent; }
+    if (ok){
+      nodes[selected].parent = hit;
+      linking = false;
+      normalize(); changed();
+    } else {
+      linking = false;
+      setStatus([{ cls:'bad', text:'Cannot chain a building to itself or its own descendants.' }]);
+      refreshInspector(); draw();
+    }
+    return;
+  }
+  if (hit != null){
+    selected = hit; linking = false;
+    drag = hit === 0 ? { mode:'pan', sx:e.clientX, sy:e.clientY, cx:cam.x, cy:cam.y }
+                     : { mode:'move', i:hit, dx:nodes[hit].x - w.x, dy:nodes[hit].y - w.y, moved:false };
+    refresh();
+    return;
+  }
+  if (placing){
+    const parent = selected != null ? selected : 0;
+    nodes.push({ type:placing, x:w.x, y:w.y, parent, straight:false, hasReturn:false });
+    selected = nodes.length - 1;
+    changed();
+    return;
+  }
+  drag = { mode:'pan', sx:e.clientX, sy:e.clientY, cx:cam.x, cy:cam.y };
+});
+cv.addEventListener('pointermove', e => {
+  if (!drag) return;
+  if (drag.mode === 'pan'){
+    cam.x = drag.cx - (e.clientX - drag.sx)/cam.scale;
+    cam.y = drag.cy - (e.clientY - drag.sy)/cam.scale;
+    draw();
+  } else {
+    const w = toWorld(e.clientX, e.clientY);
+    nodes[drag.i].x = w.x + drag.dx;
+    nodes[drag.i].y = w.y + drag.dy;
+    drag.moved = true;
+    preview = null; checkMsg = null;
+    refreshStatus(); draw();
+  }
+});
+const endDrag = () => {
+  if (drag && drag.mode === 'move' && drag.moved) changed();
+  drag = null;
+};
+cv.addEventListener('pointerup', endDrag);
+cv.addEventListener('pointercancel', endDrag);
+cv.addEventListener('wheel', e => {
+  e.preventDefault();
+  const w = toWorld(e.clientX, e.clientY);
+  cam.scale = clamp(cam.scale * (e.deltaY > 0 ? 0.88 : 1.14), 0.04, 1.2);
+  // keep the point under the cursor fixed
+  cam.x = w.x - (e.clientX - W/2)/cam.scale;
+  cam.y = w.y - (e.clientY - H/2)/cam.scale;
+  draw();
+}, { passive:false });
+
+addEventListener('keydown', e => {
+  if (e.key === 'Escape'){ placing = null; linking = false; refresh(); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') &&
+      selected > 0 && document.activeElement.tagName !== 'INPUT'){
+    D('ins-del')?.click();
+  }
+});
+
+/* ---------- boot ---------- */
+buildPalette();
+let booted = false;
+try { booted = loadSpec(JSON.parse(localStorage.getItem(AUTOSAVE_KEY) || 'null')); } catch {}
+if (!booted){ nodes = starterMap(); selected = 1; }
+resize();
+refresh();
+</script>
+</body>
+</html>
