@@ -1210,14 +1210,19 @@ function newGame(){
   }
   game.obGrid    = buildObstacleGrid(game.obstacles);
   game.campfires = [];   // campfires only appear where bandit camps fall
-  game.archer = null;
-  // spawn the samurai right on the Dojo door; one friendly archer stands guard
+  game.archers = [];
+  // spawn the samurai right on the Dojo door; four friendly archers stand guard
   const dojoB = game.buildings.find(b => b.type === 'dojo');
   if (dojoB){
     player.x = dojoB.x; player.y = dojoB.y;
     game.cam.x = dojoB.x; game.cam.y = dojoB.y;
     game.checkpoint = { x: dojoB.x, y: dojoB.y, label: 'The Dojo' };
-    game.archer = { x: dojoB.x + 60, y: dojoB.y - 60, cd: 0, aim: -Math.PI/2, shootT: 0 };
+    game.archers = [
+      { x: dojoB.x + 60,  y: dojoB.y - 60,  cd: 0.0, aim: -Math.PI/2, shootT: 0 },
+      { x: dojoB.x - 60,  y: dojoB.y - 60,  cd: 0.2, aim: -Math.PI/2, shootT: 0 },
+      { x: dojoB.x + 110, y: dojoB.y - 105, cd: 0.4, aim: -Math.PI/2, shootT: 0 },
+      { x: dojoB.x - 110, y: dojoB.y - 105, cd: 0.6, aim: -Math.PI/2, shootT: 0 },
+    ];
   }
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:player.x+rand(-VW,VW), y:player.y+rand(-VH,VH), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
@@ -1685,26 +1690,27 @@ function checkCampCleared(b){
 // The Dojo's guardian archer — picks the nearest foe in range and looses a
 // homing arrow. Reuses the 'arrow' shot (fast, gently tracking, single-target).
 function updateArcher(dt){
-  if (!game || game.dojoMode || !game.archer) return;
-  const a = game.archer;
-  if (a.shootT > 0) a.shootT -= dt;
-  a.cd -= dt;
-  if (a.cd > 0) return;
-  let near = null, bestD2 = ARCHER.range * ARCHER.range;
-  for (const e of enemies){
-    if (e.dead || e.dummy) continue;
-    const dx = e.x - a.x, dy = e.y - a.y, d2 = dx*dx + dy*dy;
-    if (d2 < bestD2){ bestD2 = d2; near = e; }
+  if (!game || game.dojoMode || !game.archers || !game.archers.length) return;
+  for (const a of game.archers){
+    if (a.shootT > 0) a.shootT -= dt;
+    a.cd -= dt;
+    if (a.cd > 0) continue;
+    let near = null, bestD2 = ARCHER.range * ARCHER.range;
+    for (const e of enemies){
+      if (e.dead || e.dummy) continue;
+      const dx = e.x - a.x, dy = e.y - a.y, d2 = dx*dx + dy*dy;
+      if (d2 < bestD2){ bestD2 = d2; near = e; }
+    }
+    if (!near) continue;
+    a.cd = ARCHER.cdMax;
+    const ang = Math.atan2(near.y - a.y, near.x - a.x);
+    a.aim = ang; a.shootT = 0.2;
+    shots.push({
+      kind:'arrow', x: a.x, y: a.y,
+      vx: Math.cos(ang)*ARCHER.shotSpeed, vy: Math.sin(ang)*ARCHER.shotSpeed,
+      dmg: ARCHER.dmg, r: 5, life: 1.4, speed: ARCHER.shotSpeed, turn: 3.2, rot: ang,
+    });
   }
-  if (!near) return;
-  a.cd = ARCHER.cdMax;
-  const ang = Math.atan2(near.y - a.y, near.x - a.x);
-  a.aim = ang; a.shootT = 0.2;
-  shots.push({
-    kind:'arrow', x: a.x, y: a.y,
-    vx: Math.cos(ang)*ARCHER.shotSpeed, vy: Math.sin(ang)*ARCHER.shotSpeed,
-    dmg: ARCHER.dmg, r: 5, life: 1.4, speed: ARCHER.shotSpeed, turn: 3.2, rot: ang,
-  });
 }
 function applyReward(kind){
   if (kind === 'ryo'){
@@ -2907,7 +2913,7 @@ function draw(){
     }
     if (game.campfires) for (const c of game.campfires) drawCampfire(c);
     if (game.buildings) for (const b of game.buildings) drawBuilding(b);
-    if (game.archer) drawArcher(game.archer);
+    if (game.archers) for (const a of game.archers) drawArcher(a);
   }
   // petals (behind)
   for (const pt of petals) drawPetal(pt);
