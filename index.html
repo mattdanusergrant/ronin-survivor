@@ -397,7 +397,7 @@ function startDojo(){
   D('dojo-interact').classList.add('hidden');
   // game state — peaceful dojo mode
   game = { state: STATE.PLAY, t: 0, kills: 0, level: 1, xp: 0, xpNext: 50,
-           spawnAcc: 0, bossT: 0, bossN: 0, cam: { x: 0, y: 0 }, dojoMode: true,
+           cam: { x: 0, y: 0 }, dojoMode: true,
            interactWith: null, lastInteract: 0, archers: makeDojoArchers(0, 0) };
   player = {
     x: 0, y: 0, r: 14, hp: 100, maxhp: 100, speed: 296, baseSpeed: 296,
@@ -672,14 +672,6 @@ function openGates(b){
   game.obstacles = game.obstacles.filter(o => !o.dead);
   game.obGrid = buildObstacleGrid(game.obstacles);
 }
-// a camp's marcher lane is open only once every boss between it and the
-// Dojo has fallen
-function campMayStream(b){
-  for (let u = b.parent; u && u.type !== 'dojo'; u = u.parent)
-    if (u.state !== 'cleared') return false;
-  return true;
-}
-
 // Flood-fill machinery shared by the soundness checks: a walkable-grid flood
 // from the Dojo with a mutable set of "simulated cleared" buildings whose
 // gates are treated as open.
@@ -936,8 +928,8 @@ function makeBuilding(type, x, y){
   };
   return b;
 }
-// The Dojo's lone guardian: one friendly archer who looses homing arrows at
-// whatever wanders into range. No slots, no Ryo, no upgrades — just a sentinel.
+// The Dojo's guardians: four friendly archers who loose homing arrows at
+// whatever wanders into range. No slots, no Ryo, no upgrades — just sentinels.
 const ARCHER = { dmg:30, cdMax:0.8, range:320, shotSpeed:440 };
 function makeDojoArchers(cx, cy){
   return [
@@ -1184,7 +1176,7 @@ const MINIMAL_WEAPON_CHANCE = 0.15;   // per-slot odds the card is a rare weapon
 //  SETUP / RESET
 // =====================================================================
 function newGame(){
-  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:50, spawnAcc:0, bossT:0, bossN:0, cam:{x:0,y:0},
+  game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:50, cam:{x:0,y:0},
            interactWith:null, lastInteract:0,
            // Dark-Souls-style checkpoint. Defaults to the Dojo's world position;
            // touching a campfire updates it. Death respawns the samurai here.
@@ -1420,117 +1412,6 @@ function hitPlayer(dmg){
     } else { respawnAtCheckpoint(); return true; }
   }
   return false;
-}
-// Spawn pressure no longer ramps with the clock — it ramps with conquest.
-// Every building the player has cleared (freed shop or beaten camp) raises
-// the world's hostility one notch; sitting still keeps the pace gentle.
-function clearedCount(){
-  if (!game || !game.buildings) return 0;
-  let n = 0;
-  for (const b of game.buildings) if (b.state === 'cleared') n++;
-  return n;
-}
-function spawnInterval(){ return Math.max(0.5, 2.6 - clearedCount() * 0.3); }
-// Per fresh-camp stream cadence. The surviving camps emit faster as the
-// player clears the others — the world reacts to losing ground.
-function campStreamInterval(){ return Math.max(3.5, 9.0 - clearedCount() * 0.8); }
-// Opened return roads are the price of convenience: each one is a permanent
-// lane for the wilds, streaming tougher marchers at the Dojo for the rest of
-// the run. Deeper shortcuts let deadlier tiers through.
-function returnStreamInterval(){ return Math.max(4.5, 8.0 - clearedCount() * 0.4); }
-function spawnReturnMarcher(b){
-  const dojo = game.buildings[0];
-  const tier = b.depth >= 7 ? 'brute' : b.depth >= 5 ? 'ninja' : 'ronin';
-  const t = ENEMY_TYPES[tier], tm = timeMul();
-  const ang = rand(0, TAU), d = b.r + 12 + rand(0, 14);
-  enemies.push({
-    x: b.x + Math.cos(ang)*d, y: b.y + Math.sin(ang)*d,
-    r: t.r, hp: t.hp*tm, maxhp: t.hp*tm,
-    speed: t.speed * 0.7,
-    dmg: t.dmg, xp: t.xp, color: t.color,
-    hit: 0, boss: false, sep: 0,
-    state: 'march', marchTo: dojo, fromCamp: b,
-    route: b.returnPts, routeIdx: 0,
-    sight: t.sight, callR: t.callR,
-    wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
-  });
-}
-
-// Walk backward from a route's end (the Dojo) by `dist` world units.
-// Returns the point plus the waypoint index a marcher placed there should
-// head for next.
-function pointAlongRouteFromEnd(route, dist){
-  let remain = dist;
-  for (let k=route.length-1; k>0; k--){
-    const a = route[k], b = route[k-1];
-    const L = Math.hypot(b.x-a.x, b.y-a.y) || 1;
-    if (remain <= L){
-      const t = remain / L;
-      return { x: a.x + (b.x-a.x)*t, y: a.y + (b.y-a.y)*t, idx: k };
-    }
-    remain -= L;
-  }
-  return { x: route[0].x, y: route[0].y, idx: 1 };
-}
-
-// alongDist (optional): place the marcher already mid-march, that many world
-// units short of the Dojo along the camp's carved route — used to pre-seed
-// the opening streams at run start.
-function spawnMarcherFromCamp(camp, alongDist=null){
-  if (!game || !game.buildings) return;
-  const dojo = game.buildings.find(b => b.type === 'dojo');
-  if (!dojo) return;
-  // emerge at the camp's perimeter so they look like they walked out of the door
-  const ang = rand(0, TAU);
-  const d   = camp.r + 10 + rand(0, 14);
-  let x = camp.x + Math.cos(ang)*d, y = camp.y + Math.sin(ang)*d, routeIdx = 0;
-  if (alongDist !== null && camp.route && camp.route.length){
-    const p = pointAlongRouteFromEnd(camp.route, alongDist);
-    x = p.x + rand(-24, 24); y = p.y + rand(-24, 24); routeIdx = p.idx;
-  }
-  const t   = ENEMY_TYPES.footpad;
-  const tm  = timeMul();
-  enemies.push({
-    x, y,
-    r: t.r, hp: t.hp * tm, maxhp: t.hp * tm,
-    speed: t.speed * 0.55,
-    dmg: t.dmg, xp: t.xp, color: t.color,
-    hit: 0, boss: false, sep: 0,
-    state: 'march', marchTo: dojo, fromCamp: camp,
-    route: camp.route || null, routeIdx,      // waypoints along the carved path to the Dojo
-    sight: t.sight, callR: t.callR,
-    wDir: 0, wTimer: 0, wSpeed: 0, alertT: 0, chargeT: 0, chargeCheckT: rand(0, 0.6),
-  });
-}
-
-function spawnEnemy(boss=false, distOverride=null){
-  // the world is mostly solid forest — re-roll the angle until the point
-  // lands on carved ground, or skip (the spawn loop retries constantly)
-  let x = 0, y = 0, open = false;
-  for (let a=0; a<(boss?40:12) && !open; a++){
-    const ang = rand(0, TAU), dist = distOverride !== null ? distOverride : Math.max(W,H)/viewScale * 0.62 + 40;
-    x = game.cam.x + Math.cos(ang) * dist; y = game.cam.y + Math.sin(ang) * dist;
-    open = isWalkable(x, y, boss ? 30 : 18);
-  }
-  if (!open) return;
-  if (boss){
-    enemies.push({ x, y, r:30, hp:520*timeMul(), maxhp:520*timeMul(), speed:46, dmg:20,
-      xp:60, color:'#7a1f1a', boss:true, hit:0, sep:0, state:'chase',
-      sight:9999, callR:0, alertT:0, chargeT:0, chargeCheckT:0, wDir:0, wTimer:0, wSpeed:0 });
-    fx.push({ kind:'warn', t:0, life:1.4 }); return;
-  }
-  // weight the roster by elapsed time
-  let roster = ['footpad'];
-  if (game.t > 35) roster.push('footpad','ronin');
-  if (game.t > 80) roster.push('ninja');
-  if (game.t > 130) roster.push('ronin','brute','ninja');
-  const t = ENEMY_TYPES[pick(roster)];
-  enemies.push({ x, y, r:t.r, hp:t.hp*timeMul(), maxhp:t.hp*timeMul(), speed:t.speed*rand(.85,1.12),
-    dmg:t.dmg, xp:t.xp, color:t.color, hit:0, boss:false, sep:0,
-    state: t.aggro ? 'chase' : 'wander',
-    sight:t.sight, callR:t.callR,
-    wDir:rand(0,TAU), wTimer:rand(1.2,3.2), wSpeed:rand(0.35,0.55),
-    alertT:0, chargeT:0, chargeCheckT:rand(0,0.6) });
 }
 
 // =====================================================================
@@ -2194,25 +2075,12 @@ function update(dt){
     // summoners are rooted — they pump adds (driven from the spawn block) and
     // only deal contact damage; everyone else runs the wander→chase AI.
     if (!e.summoner){
-    // perception: wandering or marching enemy spots player within sight radius
-    if ((e.state === 'wander' || e.state === 'march') && d < e.sight){
+    // perception: wandering enemy spots player within sight radius
+    if (e.state === 'wander' && d < e.sight){
       e.state = 'alert'; e.alertT = rand(0.3, 0.5);
     }
 
-    if (e.state === 'march'){
-      // walk the carved path toward the Dojo, waypoint by waypoint
-      let t = e.marchTo;
-      if (e.route){
-        while (e.routeIdx < e.route.length &&
-               Math.hypot(e.route[e.routeIdx].x - e.x, e.route[e.routeIdx].y - e.y) < 60) e.routeIdx++;
-        if (e.routeIdx < e.route.length) t = e.route[e.routeIdx];
-      }
-      if (t){
-        const tdx = t.x - e.x, tdy = t.y - e.y, td = Math.hypot(tdx,tdy) || 1;
-        e.x += tdx/td * e.speed * dt;
-        e.y += tdy/td * e.speed * dt;
-      }
-    } else if (e.state === 'wander'){
+    if (e.state === 'wander'){
       e.wTimer -= dt;
       if (e.wTimer <= 0){
         e.wDir = rand(0, TAU);
@@ -2225,11 +2093,11 @@ function update(dt){
       e.alertT -= dt;
       if (e.alertT <= 0){
         e.state = 'chase';
-        // call nearby allies (wanderers AND marchers respond)
+        // call nearby allies (idle wanderers respond)
         const cr2 = e.callR * e.callR;
         for (const a of enemies){
           if (a === e || a.boss) continue;
-          if (a.state !== 'wander' && a.state !== 'march') continue;
+          if (a.state !== 'wander') continue;
           const ax = a.x-e.x, ay = a.y-e.y;
           if (ax*ax + ay*ay < cr2){ a.state = 'alert'; a.alertT = rand(0.25, 0.45); }
         }
@@ -2531,7 +2399,7 @@ function update(dt){
 function updateDojoStations(){
   const P = player;
   let near = null, bestD2 = Infinity;
-  // build candidate list: dojo stations in the hub, OR buildings + their empty turret slots in a run
+  // build candidate list: dojo stations in the hub, OR the Dojo + campfires in a run
   const candidates = [];
   if (game.dojoMode){
     for (const s of DOJO_STATIONS) candidates.push(s);
@@ -2700,7 +2568,7 @@ function openLevelUp(){
     let ico, nm, ds, lvtxt, cls='';
     if (o.kind==='heal'){ ico='❤️'; nm='Second Wind'; ds='Fully restored. (All boons maxed.)'; lvtxt='FULL'; }
     else if (o.kind==='new-weapon'){ const w=WEAPONS[o.id]; ico=w.ico; nm=w.name; ds=w.desc(0); lvtxt='NEW'; cls='new'; }
-    else if (o.kind==='weapon'){ const w=WEAPONS[o.id], lv=player.weapons[o.id]; ico=w.ico; nm=w.name; ds=w.desc(lv); lvtxt='Lv '+(lv+1); }
+    else if (o.kind==='weapon'){ const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; ico=w.ico; nm=w.name; ds=w.desc(lv); lvtxt='Lv '+(lv+1); }
     else if (o.kind==='rare-weapon'){ const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; ico=w.ico; nm=w.name; ds=w.desc(lv); lvtxt=lv===0?'RARE':'Lv '+(lv+1); cls='new'; }
     else if (o.kind==='minimal'){ const u=MINIMAL_UPGRADES[o.id], lv=(player.minimalUpgrades&&player.minimalUpgrades[o.id])||0; ico=u.ico; nm=u.name; ds=u.desc; lvtxt='Lv '+(lv+1); }
     else { const w=PASSIVES[o.id], lv=player.passives[o.id]||0; ico=w.ico; nm=w.name; ds=w.desc; lvtxt='Lv '+(lv+1); }
@@ -2830,7 +2698,7 @@ function closeCampfireMenu(){
 function cardLabel(o){
   if (o.kind==='heal')        return { ico:'❤️', nm:'Second Wind', ds:'Fully restored. (All boons maxed.)', lv:'FULL', cls:'' };
   if (o.kind==='new-weapon')  { const w=WEAPONS[o.id]; return { ico:w.ico, nm:w.name, ds:w.desc(0), lv:'NEW', cls:'new' }; }
-  if (o.kind==='weapon')      { const w=WEAPONS[o.id], lv=player.weapons[o.id]; return { ico:w.ico, nm:w.name, ds:w.desc(lv), lv:'Lv '+(lv+1), cls:'' }; }
+  if (o.kind==='weapon')      { const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; return { ico:w.ico, nm:w.name, ds:w.desc(lv), lv:'Lv '+(lv+1), cls:'' }; }
   if (o.kind==='rare-weapon') { const w=WEAPONS[o.id], lv=player.weapons[o.id]||0; return { ico:w.ico, nm:w.name, ds:w.desc(lv), lv:lv===0?'RARE':'Lv '+(lv+1), cls:'new' }; }
   if (o.kind==='minimal')     { const u=MINIMAL_UPGRADES[o.id], lv=(player.minimalUpgrades&&player.minimalUpgrades[o.id])||0; return { ico:u.ico, nm:u.name, ds:u.desc, lv:'Lv '+(lv+1), cls:'' }; }
   const w=PASSIVES[o.id], lv=player.passives[o.id]||0;
@@ -3519,13 +3387,6 @@ function drawShot(s){
     ctx.shadowBlur=0;
     ctx.fillStyle='#7a5b2a';
     ctx.beginPath(); ctx.arc(0,0,3,0,TAU); ctx.fill();
-  } else if (s.kind==='turretShot'){
-    const ang = Math.atan2(s.vy, s.vx);
-    ctx.rotate(ang);
-    ctx.strokeStyle = '#d8d1b6'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.moveTo(-7, 0); ctx.lineTo(5, 0); ctx.stroke();
-    ctx.fillStyle = '#cfd3da'; ctx.shadowColor = '#fff'; ctx.shadowBlur = 3;
-    ctx.beginPath(); ctx.moveTo(10, 0); ctx.lineTo(4, -2); ctx.lineTo(4, 2); ctx.closePath(); ctx.fill();
   } else if (s.kind==='arrow'){
     const ang = Math.atan2(s.vy, s.vx);
     ctx.rotate(ang);

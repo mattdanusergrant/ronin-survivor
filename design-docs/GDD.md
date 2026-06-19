@@ -25,7 +25,7 @@ move to dodge / herd enemies  →  weapons auto-hit  →  foes drop ki
    →  stronger build  →  bigger swarm  →  repeat until you fall (or the timer ends)
 ```
 
-A run takes place in a gated world carved out of solid cherry-blossom forest (large water bodies are placed first after the paths, then blossom trees fill the rest without overlapping the water; faint pink petals drift through): the Dojo sits at the center of the map, a single straight tutorial road leads to the first bandit camp, and the chain of zones wraps outward around the Dojo from there. The default layout is a procedural spiral; custom layouts — including branching ones — can be drawn in **`mapbuilder.html`** (place/chain/drag buildings, validate gate seals against the real generator, export/import JSON) and played via `index.html?map=custom`. Every zone boss barricades the road onward until it falls. There are **no ambient spawns**: the roads are instead lined with **dormant summoner nests** (spaced along every corridor, deeper = tougher), each marked by a glowing sigil totem you can spot ahead. Walk within range and a hooded summoner wakes and conjures a spectral horde until you fight through and kill it — then its horde dissolves and the spot is safe. Flee far enough and it leashes back to sleep; **resting at a campfire (or dying) resets every nest**, so cleared ground can be re-run. A single friendly **guardian archer** stands watch at the Dojo. Campfires (checkpoints) appear where bandit camps are razed. The camera follows the player. No menus mid-run except the level-up draft and special-building boon drafts (which pause time).
+A run takes place in a gated world carved out of solid cherry-blossom forest (large water bodies are placed first after the paths, then blossom trees fill the rest without overlapping the water; faint pink petals drift through): the Dojo sits at the center of the map, a single straight tutorial road leads to the first bandit camp, and the chain of zones wraps outward around the Dojo from there. The default layout is a procedural spiral; custom layouts — including branching ones — can be drawn in **`mapbuilder.html`** (place/chain/drag buildings, validate gate seals against the real generator, export/import JSON) and played via `index.html?map=custom`. Every zone boss barricades the road onward until it falls. There are **no ambient spawns**: the roads are instead lined with **dormant summoner nests** (spaced along every corridor, deeper = tougher), each marked by a glowing sigil totem you can spot ahead. Walk within range and a hooded summoner wakes and conjures a spectral horde until you fight through and kill it — then its horde dissolves and the spot is safe. Flee far enough and it leashes back to sleep; **resting at a campfire (or dying) resets every nest**, so cleared ground can be re-run. A handful of friendly **guardian archers** (four) stand watch at the Dojo. Campfires (checkpoints) appear where bandit camps are razed. The camera follows the player. No menus mid-run except the level-up draft and special-building boon drafts (which pause time).
 
 ---
 
@@ -33,7 +33,7 @@ A run takes place in a gated world carved out of solid cherry-blossom forest (la
 
 Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait first. Built to this DoD — **all verified headlessly** (node syntax check + DOM-stubbed sim: spawn/kite/level-up/all-four-weapons/boss/render all pass):
 
-- **Control (desktop-first):** WASD/arrows to move; **mouse-aim + hold left-click** for an aimed ki bolt; **spacebar** to dodge-roll (i-frames + short cooldown) or to interact when standing on something usable (campfire/turret/Dojo/shop). Drafted weapons still auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
+- **Control (desktop-first):** WASD/arrows to move; **mouse-aim + hold left-click** for an aimed ki bolt; **spacebar** to dodge-roll (i-frames + short cooldown) or to interact when standing on something usable (campfire/Dojo/Dojo station). Drafted weapons still auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
 - **4 weapons**, each 6 levels:
   | Weapon | Behaviour |
   |---|---|
@@ -50,7 +50,7 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
 - **Flow:** title → play → pause (resume/abandon) → game-over with run stats (time survived, felled, level) + restart.
 
 ### Now in the prototype beyond the VS core
-- **Meta-progression:** Ryo currency earned per run, spent on permanent upgrades at the Dojo's **Ryo Trader** (the only permanent sink), persisted in `localStorage` (`ronin-meta-v1`); a walkable Dojo hub (Ryo Trader + Spirit Forge + The Road) with training dummies and a lone guardian archer; a gated spiral world with boss seals, campfire checkpoints (which also reset the world's summoner nests), and dormant summoner nests along the roads; a sprite-art pipeline and a custom-map editor (`mapbuilder.html`). Mini-games (Samurai Soccer, Samurai Volleyball) are an Options-menu easter egg rather than Dojo stations.
+- **Meta-progression:** Ryo currency earned per run, spent on permanent upgrades at the Dojo's **Ryo Trader** (the only permanent sink), persisted in `localStorage` (`ronin-meta-v1`); a walkable Dojo hub (Ryo Trader + Spirit Forge + The Road) with training dummies and four guardian archers; a gated spiral world with boss seals, campfire checkpoints (which also reset the world's summoner nests), and dormant summoner nests along the roads; a sprite-art pipeline and a custom-map editor (`mapbuilder.html`). Mini-games (Samurai Soccer, Samurai Volleyball) are an Options-menu easter egg rather than Dojo stations.
 - **Special-building boon drafts:** the zone chain is randomised each run (zone 1 is always the tutorial camp; the rest is a shuffle that guarantees all five special buildings + two more camps). Clearing a special building grants a **run-scoped boon draft** (pick 1 of 3, reusing the level-up card UI): the **Forgotten Shrine** offers defensive *Blessings* (heals to full first), **Ronin's Cache** offers offensive *Arsenal* picks (weapon level / new weapon / damage), and the three ex-shops (**Smithy/Vigor/Spirit**) offer build-defining *Altar* pacts with a tradeoff (e.g. +50% damage / −20% max HP). Bandit camps still drop a Ryo orb + plant a campfire checkpoint. Mid-run permanent Ryo shops were removed — all permanent spending now lives at the Dojo.
 
 ### Deliberately NOT in the prototype (next-up)
@@ -60,10 +60,12 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
 
 ## Progression & balance (current first pass)
 
-- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact.
-- **Level curve:** `xpNext = round(5 + lvl²·1.15 + lvl·3)` — gentle early, steepening.
-- **Enemy HP scale:** `×(1 + t/75)`; **spawn interval:** `max(0.18s, 1.05 − t·0.0065)`.
-- **Boss HP:** 900 × time-scale, every 60s.
+- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact; dodge-roll = 0.22s dash (i-frames), 0.7s cooldown.
+- **Level curve:** `xpNext = round(50 + lvl²·11.5 + lvl·30)` — gentle early, steepening.
+- **Global HP scale (`timeMul`):** `×(1 + t/75)` — applies to zone bosses (not nest adds, which scale by depth).
+- **Summoner nests** (`NEST` in `index.html`): wake at 320px, leash at 760px; each summoner pulses `addBurst:2` adds every `addCd:0.7s`, capped at `addCap:14` live; spacing `along:600px`.
+- **Summoner HP:** `round((110 + depth·60)·(1 + t/240))`; **nest add HP:** type base `×(1 + depth·0.12)`.
+- **Zone boss HP:** per-building base (340–520, see `BUILDING_TYPES`) `× timeMul × (1 + 0.25·(depth−1))` — +25% HP per zone past the first.
 
 These are *feel-tunable knobs*, not committed design. First playtest goal: confirm the "minute-5 power fantasy" curve lands and early survival is tense-but-fair, then tune.
 
@@ -81,7 +83,7 @@ These are *feel-tunable knobs*, not committed design. First playtest goal: confi
 
 1. **Title.** *Ronin Survivor* is a placeholder. Keep it, or pick another legally-distinct name? (Direct "Afro Samurai" naming is a trademark risk if ever shared publicly.)
 2. **Win condition.** Endless-until-death (current), or a survive-to-N-minutes victory + boss finale (classic VS)?
-3. **Meta-progression.** A first pass exists (Ryo → permanent upgrades + turret levels, persisted between runs). Open question is now *depth*: how far to extend the upgrade tree / unlock system to carry long-term retention.
+3. **Meta-progression.** A first pass exists (Ryo → permanent upgrades at the Dojo's Ryo Trader, persisted between runs). Open question is now *depth*: how far to extend the upgrade tree / unlock system to carry long-term retention.
 4. **Audio.** Lo-fi/hip-hop-samurai loop + SFX — generate procedurally (WebAudio) to stay asset-free, or source licensed tracks?
 5. **Characters.** One swordsman, or multiple with different starting weapons/stats?
 6. **Evolutions.** Add VS-style weapon+passive fusion ultimates (the depth hook)?

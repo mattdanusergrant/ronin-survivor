@@ -43,10 +43,30 @@ spawns):
 **Follow-up (not blocking):**
 - Tuning pass: `NEST` cadence/cap/burst, summoner HP vs. depth, nest spacing —
   all first-pass guesses; needs a real playtest.
-- Dead code to sweep later: the retired spawners (`spawnEnemy`,
+- ~~Dead code to sweep later: the retired spawners (`spawnEnemy`,
   `spawnMarcherFromCamp`, `spawnReturnMarcher`, `spawnInterval`,
   `campStreamInterval`, `returnStreamInterval`, `pointAlongRouteFromEnd`,
-  `campMayStream`, the enemy AI `'march'` branch) are now unreferenced.
+  `campMayStream`, the enemy AI `'march'` branch).~~ ✅ **SWEPT (2026-06-19)** —
+  also removed the orphaned `clearedCount` helper, the dead `spawnAcc`/`bossT`/
+  `bossN` game fields, and the unreachable `turretShot` draw branch (turret
+  economy was cut earlier).
 - Boss-fight identity per building type (still a stat block + shared telegraphs).
+
+---
+
+## 3. Handoff hygiene — ✅ DONE (2026-06-19)
+
+Prep for handing the prototype to another dev:
+- Dead-code sweep (see #2 follow-up above).
+- Docs reconciled with the current build: README + GDD no longer mention the
+  cut systems (time-scaled ambient spawns, the 60s warlord, return-road
+  marcher lanes, upgradeable turrets) and now describe the summoner-nest flow,
+  the four Dojo guardian archers, and the current balance constants.
+- Added a `CLAUDE.md` at the repo root: architecture map, run/verify steps,
+  code landmarks, and known gotchas for the next dev.
+
+**Follow-up (not blocking):** there is still no automated test harness checked
+in — the GDD references a "DOM-stubbed sim" that lives outside this repo. Worth
+committing a small headless smoke test (`?expose=1` already exposes the hooks).
 
 #LLM-generated
