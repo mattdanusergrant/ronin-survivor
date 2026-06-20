@@ -4663,6 +4663,11 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     drawArcher, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
     newGame, startDojo, openBuildingDraft, BUILDING_BOONS, DOJO_STATIONS,
     resetNests, NEST, get nests(){ return game && game.nests; },
+    // --- headless-sim hooks (smoke test in test/smoke.js drives these) ---
+    update, draw, STATE, WEAPONS, PASSIVES, ENEMY_TYPES,
+    buildOptions, applyOption, gainXP, damage,
+    get orbs(){ return orbs; }, get blades(){ return blades; },
+    get petals(){ return petals; },
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
     get enemies(){return enemies},
