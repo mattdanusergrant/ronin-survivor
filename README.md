@@ -11,6 +11,7 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 - `assets/sprites/` — pixel-art sprites + a drop-in pipeline: drop a correctly-named PNG and it appears in-game on next load, falling back to procedural art until it's there. See `assets/sprites/README.md` for the naming/size convention.
 - `design-docs/GDD.md` — design doc (pillars, core loop, prototype scope, balance knobs, open questions).
 - `CLAUDE.md` — dev guide / handoff notes: how to run & verify, a code map of `index.html`, and gotchas for the next dev.
+- `test/smoke.js` — dependency-free headless smoke test (`npm test`); also wired to CI (`.github/workflows/test.yml`).
 - `.github/workflows/pages.yml` — auto-deploys the site to GitHub Pages on every push to `main`.
 
 ## How to play

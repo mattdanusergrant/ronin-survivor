@@ -26,22 +26,26 @@ Orientation for the next person (human or agent) picking this up. For the
 
 ## Verify a change
 
-There is **no automated test harness checked into this repo** (the GDD's
-"DOM-stubbed sim" lives elsewhere). Minimum bar before pushing:
-
 ```bash
-# 1. Syntax-check the inline script (extract the <script> body, then node --check)
-#    The script currently spans the lines between <script> and </script>.
-sed -n '/<script>/,/<\/script>/p' index.html | sed '1d;$d' > /tmp/game.js
-node --check /tmp/game.js && echo "SYNTAX OK"
+# 1. Headless smoke test (dependency-free; ~10 assertions over the key paths).
+#    Loads the inline <script> in Node behind a DOM/Canvas stub via ?expose=1,
+#    starts a run, fires every weapon at a swarm, runs the Dojo + nest paths,
+#    and asserts no throw / no NaN / sane state. Catches a SyntaxError on load
+#    too, so it subsumes the old `node --check`.
+npm test            # === node test/smoke.js  (exit 0 = pass, 1 = fail)
 
 # 2. Open the game in a browser and sanity-play: title → run, level up, wake a
 #    summoner nest, clear a zone boss, rest at a campfire, enter the Dojo.
 ```
 
-`?expose=1` makes it cheap to script a headless render check with a DOM stub if
-you want one — committing a small smoke test is the top "nice to have" (see
-`design-docs/TODO.md`).
+CI runs the same smoke test on every push/PR (`.github/workflows/test.yml`).
+
+The smoke test (`test/smoke.js`) drives the game through the `?expose=1` dev
+hatch (`window.__art`). If you add a system you want covered, expose the handle
+it needs in the `window.__art` block at the end of the script (the headless-sim
+hooks are grouped there) and add a `test(...)` case. It's a *smoke* test — it
+exercises code paths and invariants, not feel or pixels (the canvas is a no-op
+stub, so it confirms the draw code doesn't throw, not what it draws).
 
 ## Code map — `index.html` (single `<script>`)
 

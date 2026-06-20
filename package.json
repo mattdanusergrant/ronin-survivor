@@ -1,0 +1,10 @@
+{
+  "name": "ronin-survivor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vampire-Survivors-style horde-survival auto-battler. Single self-contained index.html (vanilla JS + Canvas), no build step, no runtime deps.",
+  "scripts": {
+    "test": "node test/smoke.js"
+  },
+  "license": "UNLICENSED"
+}

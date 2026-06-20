@@ -65,8 +65,13 @@ Prep for handing the prototype to another dev:
 - Added a `CLAUDE.md` at the repo root: architecture map, run/verify steps,
   code landmarks, and known gotchas for the next dev.
 
-**Follow-up (not blocking):** there is still no automated test harness checked
+**Follow-up (not blocking):** ~~there is still no automated test harness checked
 in — the GDD references a "DOM-stubbed sim" that lives outside this repo. Worth
-committing a small headless smoke test (`?expose=1` already exposes the hooks).
+committing a small headless smoke test (`?expose=1` already exposes the hooks).~~
+✅ **DONE (2026-06-20)** — `test/smoke.js` is a dependency-free headless smoke
+test (`npm test`) that loads the inline script behind a DOM/Canvas stub via
+`?expose=1` and drives the key paths (run start, all weapons vs. a swarm, the
+level-up draft, the Dojo, nest reset, every building boon). CI runs it on every
+push/PR (`.github/workflows/test.yml`).
 
 #LLM-generated
