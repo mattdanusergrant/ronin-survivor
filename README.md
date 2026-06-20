@@ -22,7 +22,8 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 
 - **Move** — WASD / arrow keys
 - **Aim + fire** — point with the mouse, hold **left-click** to fire an aimed ki bolt at the cursor
-- **Spacebar** — **dodge-roll** (a quick dash with brief invulnerability); when you're standing on something usable (a campfire checkpoint, the Dojo, or a Dojo station) it **interacts** instead. `E`/`Enter` also interact.
+- **Right-click** — **dodge-roll** (a quick dash with brief invulnerability)
+- **Interact** — `E` / `Enter` / `Space` when standing on something usable (a campfire checkpoint, the Dojo, or a Dojo station)
 - Your drafted weapons still fire **automatically** on top of all this
 - **Esc/P** — pause
 
@@ -32,7 +33,7 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 
 ## What's in the prototype
 
-- Desktop controls: WASD move, mouse-aimed left-click ki bolt, spacebar dodge-roll / interact (touch drag-to-move kept as a fallback)
+- Desktop controls: WASD move, mouse-aimed left-click ki bolt, right-click dodge-roll, `E` / `Enter` / `Space` interact (touch drag-to-move kept as a fallback)
 - Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives, all firing on top of the manual aimed shot
 - Level-up boon draft (3-of-N, pauses time)
 - A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; razed camps leave campfire checkpoints

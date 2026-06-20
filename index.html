@@ -181,7 +181,7 @@
     <div id="title-ryo" class="ryoline">🪙 <b>0</b> Ryo</div>
     <div class="help">
       <b>Move:</b> WASD / arrows &nbsp; <b>Aim + fire:</b> mouse + hold left-click<br>
-      <b>Spacebar:</b> dodge-roll (i-frames) — or interact when prompted<br>
+      <b>Right-click:</b> dodge-roll (i-frames) &nbsp; <b>Interact:</b> E / Enter / Space when prompted<br>
       Your other weapons swing on their own. Walk into <b style="color:var(--ki)">ki</b> to level up, then pick a boon.<br>
       Don't get touched. Last as long as you can. <span style="opacity:.6">(touch: drag to move)</span>
     </div>
@@ -1296,13 +1296,17 @@ cv.addEventListener('pointermove', e=>{ if (e.pointerType==='touch' && stick.on)
 cv.addEventListener('pointerup', e=>{ if (e.pointerType==='touch') pEnd(); });
 cv.addEventListener('pointercancel', e=>{ if (e.pointerType==='touch') pEnd(); });
 
-// ---------- mouse aim + aimed shot (desktop primary) ----------
+// ---------- mouse aim + aimed shot / dodge-roll (desktop primary) ----------
 const mouse = { x: 0, y: 0 };
 let mouseDown = false, usingMouse = false;
 addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; usingMouse = true; });
-cv.addEventListener('mousedown', e=>{ if (e.button===0){ mouse.x=e.clientX; mouse.y=e.clientY; usingMouse=true; mouseDown=true; } });
+cv.addEventListener('mousedown', e=>{
+  mouse.x=e.clientX; mouse.y=e.clientY; usingMouse=true;
+  if (e.button===0) mouseDown=true;
+  else if (e.button===2 && game && game.state === STATE.PLAY && !game.dojoMode) startRoll();
+});
 addEventListener('mouseup', e=>{ if (e.button===0) mouseDown=false; });
-cv.addEventListener('contextmenu', e=> e.preventDefault());   // free right-click for later
+cv.addEventListener('contextmenu', e=> e.preventDefault());   // right-click dodge-roll
 // World-space angle from (px,py) to the cursor. Uses run-mode viewScale; the
 // camera maps world→screen as screen = W/2 + viewScale*(world - cam).
 function aimAngle(px, py){
@@ -4633,10 +4637,8 @@ addEventListener('keydown', e=>{
   if (e.repeat || !game || game.state !== STATE.PLAY) return;
   const k = e.key.toLowerCase();
   if (!(e.key===' ' || e.key==='Enter' || k==='e')) return;
-  // Context-sensitive: interact when standing on something, else dodge-roll.
-  // E / Enter only ever interact; spacebar rolls when there's nothing to use.
+  // Keyboard interaction is only for focused stations; right-click dodge-rolls.
   if (game.interactWith) dojoActivate();
-  else if (e.key===' ' && !game.dojoMode) startRoll();
 });
 // Wipes all META progression (Ryo, upgrades, lifetime stats, armed Pit).
 // SETTINGS (joystick / upgradeMode) are intentionally preserved as
