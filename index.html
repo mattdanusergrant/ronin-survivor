@@ -370,7 +370,9 @@ const elCampfire = D('campfire');
 // ---------- audio ----------
 const ROAD_ENTER_SOUND_SRC = 'assets/audio/road-enter-slash.mp3';
 const ROAD_MUSIC_SRC = 'assets/audio/road-music-samurai-siren.mp3';
+const MENU_DOJO_MUSIC_SRC = 'assets/audio/menu-dojo-music.mp3';
 let roadMusic = null;
+let menuDojoMusic = null;
 function playRoadEnterSound(){
   try {
     const s = new Audio(ROAD_ENTER_SOUND_SRC);
@@ -382,6 +384,7 @@ function playRoadEnterSound(){
 }
 function playRoadMusic(){
   try {
+    stopMenuDojoMusic();
     if (!roadMusic){
       roadMusic = new Audio(ROAD_MUSIC_SRC);
       roadMusic.loop = true;
@@ -399,6 +402,32 @@ function stopRoadMusic(){
     roadMusic.currentTime = 0;
   } catch {}
 }
+function playMenuDojoMusic(){
+  try {
+    stopRoadMusic();
+    if (!menuDojoMusic){
+      menuDojoMusic = new Audio(MENU_DOJO_MUSIC_SRC);
+      menuDojoMusic.loop = true;
+      menuDojoMusic.volume = 0.36;
+    }
+    const p = menuDojoMusic.play();
+    if (p && p.catch) p.catch(()=>{});
+  } catch {}
+}
+function stopMenuDojoMusic(){
+  if (!menuDojoMusic) return;
+  try {
+    menuDojoMusic.pause();
+    menuDojoMusic.currentTime = 0;
+  } catch {}
+}
+function playMenuDojoMusicIfVisible(){
+  const titleVisible = !elTitle.classList.contains('hidden');
+  const dojoVisible = game && game.dojoMode;
+  if (titleVisible || dojoVisible) playMenuDojoMusic();
+}
+addEventListener('pointerdown', playMenuDojoMusicIfVisible);
+addEventListener('keydown', playMenuDojoMusicIfVisible);
 
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
@@ -426,6 +455,7 @@ const DOJO_DUMMIES = [  // four dummies stacked along the right wall
 ];
 function startDojo(){
   stopRoadMusic();
+  playMenuDojoMusic();
   game = null; soccer = null; volley = null;
   elHud.classList.add('hidden');
   elPauseBtn.classList.add('hidden');  // no pause in the dojo
@@ -1212,6 +1242,7 @@ const MINIMAL_WEAPON_CHANCE = 0.15;   // per-slot odds the card is a rare weapon
 //  SETUP / RESET
 // =====================================================================
 function newGame(){
+  stopMenuDojoMusic();
   game = { state:STATE.PLAY, t:0, kills:0, level:1, xp:0, xpNext:50, cam:{x:0,y:0},
            interactWith:null, lastInteract:0,
            // Dark-Souls-style checkpoint. Defaults to the Dojo's world position;
@@ -3732,7 +3763,10 @@ function updateHud(){
 function showOnly(el){
   for (const o of [elTitle, elLevelup, elPaused, elOver, elOptions, elSoccerOver, elVolleyOver, elDojo, elCampfire]) o.classList.add('hidden');
   if (el) el.classList.remove('hidden');
-  if (el === elTitle) refreshTitleRyo();
+  if (el === elTitle){
+    refreshTitleRyo();
+    playMenuDojoMusic();
+  }
 }
 function refreshTitleRyo(){ D('title-ryo').innerHTML = `🪙 <b>${META.ryo}</b> Ryo`; }
 function togglePause(){
