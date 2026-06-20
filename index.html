@@ -365,6 +365,26 @@ const elOptions = D('options'), elSoccerOver = D('soccer-over'), elVolleyOver = 
 const elDojo = D('dojo');
 const elCampfire = D('campfire');
 
+// ---------- audio ----------
+const ROAD_ENTER_SOUND = (() => {
+  try {
+    const a = new Audio('assets/audio/road-enter-slash.mp3');
+    a.preload = 'auto';
+    a.volume = 0.75;
+    return a;
+  } catch {
+    return null;
+  }
+})();
+function playRoadEnterSound(){
+  if (!ROAD_ENTER_SOUND) return;
+  try {
+    ROAD_ENTER_SOUND.currentTime = 0;
+    const p = ROAD_ENTER_SOUND.play();
+    if (p && p.catch) p.catch(()=>{});
+  } catch {}
+}
+
 // ---------- persisted settings ----------
 const SETTINGS_KEY = 'ronin-settings-v1';
 const SETTINGS = (function(){
@@ -2468,6 +2488,7 @@ function dojoActivate(){
     return;
   }
   if (s.kind === 'run')  {
+    playRoadEnterSound();
     // Paused mid-run dojo visit → resume the same run.
     // Title → fresh run.
     if (runSnapshot){
