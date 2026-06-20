@@ -297,6 +297,7 @@ ctx.imageSmoothingEnabled = false;   // crisp pixels for sprite assets
 const SPRITE_MANIFEST = {
   // All entities are pre-wired: drop a file and it appears, no code change.
   ronin:      { file: 'ronin.png',       size: 32 },  // wired (drawPlayer)
+  roninRoll:  { file: 'roninroll.png',   size: 16 },  // wired (drawPlayer roll)
   // logo is an <img> tag, not a canvas sprite — see #title-logo in the HTML
   dojo:       { file: 'dojo.png',        size: 64 },  // wired (drawBuilding)
   shop:       { file: 'shop.png',        size: 64 },  // wired (drawBuilding)
@@ -331,6 +332,7 @@ const SPR = (() => {
   return reg;
 })();
 const RONIN_SPRITE = SPR.ronin;  // player draw site reads RONIN_SPRITE._ready
+const RONIN_ROLL_SPRITE = SPR.roninRoll;
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 700;  // target visible world width; smaller screens zoom out
 const MAX_PROJ_RANGE = 400;   // projectiles die after this many world units from spawn — keeps shots on-screen
@@ -3598,6 +3600,16 @@ function drawPlayer(){
   // shadow
   ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.beginPath(); ctx.ellipse(0,P.r+4,P.r*0.9,4,0,0,TAU); ctx.fill();
   ctx.translate(0,bob);
+  if (P.rollT > 0 && RONIN_ROLL_SPRITE._ready){
+    const size = P.r * 2.45;
+    const spinDir = P.raDx < -0.1 ? -1 : 1;
+    ctx.save();
+    ctx.rotate(game.t * 46 * spinDir);
+    ctx.drawImage(RONIN_ROLL_SPRITE, -size/2, -size/2, size, size);
+    ctx.restore();
+    ctx.restore();
+    return;
+  }
   if (RONIN_SPRITE._ready){
     // sprite is upright + faces forward; flip horizontally to match facing.
     // Drawn ~2.4× the hit radius so the visual reads at a glance.
