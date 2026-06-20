@@ -367,6 +367,8 @@ const elCampfire = D('campfire');
 
 // ---------- audio ----------
 const ROAD_ENTER_SOUND_SRC = 'assets/audio/road-enter-slash.mp3';
+const ROAD_MUSIC_SRC = 'assets/audio/road-music-samurai-siren.mp3';
+let roadMusic = null;
 function playRoadEnterSound(){
   try {
     const s = new Audio(ROAD_ENTER_SOUND_SRC);
@@ -374,6 +376,25 @@ function playRoadEnterSound(){
     s.currentTime = 0;
     const p = s.play();
     if (p && p.catch) p.catch(()=>{});
+  } catch {}
+}
+function playRoadMusic(){
+  try {
+    if (!roadMusic){
+      roadMusic = new Audio(ROAD_MUSIC_SRC);
+      roadMusic.loop = true;
+      roadMusic.volume = 0.42;
+    }
+    if (roadMusic.paused) roadMusic.currentTime = 0;
+    const p = roadMusic.play();
+    if (p && p.catch) p.catch(()=>{});
+  } catch {}
+}
+function stopRoadMusic(){
+  if (!roadMusic) return;
+  try {
+    roadMusic.pause();
+    roadMusic.currentTime = 0;
   } catch {}
 }
 
@@ -402,6 +423,7 @@ const DOJO_DUMMIES = [  // four dummies stacked along the right wall
   { x: 180, y: -130 }, { x: 180, y: -45 }, { x: 180, y: 40 }, { x: 180, y: 125 },
 ];
 function startDojo(){
+  stopRoadMusic();
   game = null; soccer = null; volley = null;
   elHud.classList.add('hidden');
   elPauseBtn.classList.add('hidden');  // no pause in the dojo
@@ -2481,6 +2503,7 @@ function dojoActivate(){
   }
   if (s.kind === 'run')  {
     playRoadEnterSound();
+    playRoadMusic();
     // Paused mid-run dojo visit → resume the same run.
     // Title → fresh run.
     setTimeout(()=>{
@@ -3726,6 +3749,7 @@ function awardRunStats(g){
   return earned;
 }
 function gameOver(win){
+  stopRoadMusic();
   game.state = STATE.OVER;
   const m = Math.floor(game.t/60), s = Math.floor(game.t%60);
   const earned = awardRunStats(game);
