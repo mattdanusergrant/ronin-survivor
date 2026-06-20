@@ -366,21 +366,13 @@ const elDojo = D('dojo');
 const elCampfire = D('campfire');
 
 // ---------- audio ----------
-const ROAD_ENTER_SOUND = (() => {
-  try {
-    const a = new Audio('assets/audio/road-enter-slash.mp3');
-    a.preload = 'auto';
-    a.volume = 0.75;
-    return a;
-  } catch {
-    return null;
-  }
-})();
+const ROAD_ENTER_SOUND_SRC = 'assets/audio/road-enter-slash.mp3';
 function playRoadEnterSound(){
-  if (!ROAD_ENTER_SOUND) return;
   try {
-    ROAD_ENTER_SOUND.currentTime = 0;
-    const p = ROAD_ENTER_SOUND.play();
+    const s = new Audio(ROAD_ENTER_SOUND_SRC);
+    s.volume = 1;
+    s.currentTime = 0;
+    const p = s.play();
     if (p && p.catch) p.catch(()=>{});
   } catch {}
 }
@@ -2491,11 +2483,13 @@ function dojoActivate(){
     playRoadEnterSound();
     // Paused mid-run dojo visit → resume the same run.
     // Title → fresh run.
-    if (runSnapshot){
-      restoreRun();
-    } else {
-      exitDojoTo(()=>newGame());
-    }
+    setTimeout(()=>{
+      if (runSnapshot){
+        restoreRun();
+      } else {
+        exitDojoTo(()=>newGame());
+      }
+    }, 120);
     return;
   }
   if (s.kind === 'exit') { leaveDojo(); return; }
