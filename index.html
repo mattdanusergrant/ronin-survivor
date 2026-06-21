@@ -511,7 +511,7 @@ const BUILDING_TYPES = {
   cache:   { name:"Ronin's Cache",    ico:'📦', tag:'Arsenal',  color:'#e7b53b', reward:'buff',
              boss: { name:'Cache Sentinel',   hp:400, speed:46, dmg:22, r:25, xp:44 } },
   // Altar buildings — captured by bosses; clearing one grants a build-defining
-  // run-scoped boon draft (a "dark bargain") instead of opening a store.
+  // run-scoped boon draft (pure-upside power) instead of opening a store.
   smithy:  { name:'Smithy',         ico:'🗡️', tag:'Combat altar',  color:'#b58a3a', shopGroup:'combat',
              boss: { name:'Captured Smith',  hp:380, speed:52, dmg:20, r:26, xp:46 } },
   vigor:   { name:'Hall of Vigor',  ico:'🛡️', tag:'Defense altar', color:'#5a7a9a', shopGroup:'defense',
@@ -2871,7 +2871,7 @@ function applyOption(o){
 // =====================================================================
 //  SPECIAL-BUILDING BOON DRAFTS — run-scoped picks granted on a zone clear.
 //  Shrine = defensive blessing · Cache = offensive arsenal · the ex-shops =
-//  build-defining "altars" with a tradeoff. All apply to the LIVE player only
+//  build-defining "altars" (pure-upside boons). All apply to the LIVE player only
 //  (permanent Ryo upgrades live solely at the Dojo now).
 // =====================================================================
 function bumpBestWeapon(p){
@@ -2901,29 +2901,29 @@ const BUILDING_BOONS = {
     { ico:'🔥', nm:'Bloodlust', ds:'+25% all damage',                   apply:p=>{ p.power*=1.25; } },
     { ico:'🎯', nm:'Deadeye',   ds:'+18% damage · −10% cooldowns',      apply:p=>{ p.power*=1.18; p.haste*=0.9; } },
   ],
-  'altar-combat': [   // Smithy — power for risk
-    { ico:'🔥', nm:"Berserker's Pact", ds:'+50% damage · −20% max HP',          apply:p=>{ p.power*=1.5; p.maxhp=Math.round(p.maxhp*0.8); p.hp=Math.min(p.hp,p.maxhp); } },
-    { ico:'⚡', nm:'Frenzy',           ds:'−22% cooldowns · +20% damage taken', apply:p=>{ p.haste*=0.78; p.armor=(p.armor||0)-0.2; } },
-    { ico:'🗡️', nm:'Glass Edge',       ds:'+40% damage · no armor',             apply:p=>{ p.power*=1.4; p.armor=0; } },
+  'altar-combat': [   // Smithy — pure offense
+    { ico:'🔥', nm:"Berserker's Edge", ds:'+50% damage',               apply:p=>{ p.power*=1.5; } },
+    { ico:'⚡', nm:'Frenzy',           ds:'−22% cooldowns',            apply:p=>{ p.haste*=0.78; } },
+    { ico:'🗡️', nm:'Keen Edge',        ds:'+35% damage · −10% cooldowns', apply:p=>{ p.power*=1.35; p.haste*=0.9; } },
   ],
-  'altar-defense': [  // Hall of Vigor — durability for output
-    { ico:'🛡️', nm:'Aegis',      ds:'−35% damage taken · −12% damage', apply:p=>{ p.armor=Math.min(0.75,(p.armor||0)+0.35); p.power*=0.88; } },
-    { ico:'❤️', nm:'Titan',      ds:'+60% max HP · −10% move',         apply:p=>{ p.maxhp=Math.round(p.maxhp*1.6); p.hp=p.maxhp; p.speed*=0.9; p.baseSpeed*=0.9; } },
-    { ico:'🍵', nm:"Monk's Vow", ds:'+5 HP/sec · −18% damage',         apply:p=>{ p.regen+=5; p.power*=0.82; } },
+  'altar-defense': [  // Hall of Vigor — pure durability
+    { ico:'🛡️', nm:'Aegis',      ds:'−35% damage taken', apply:p=>{ p.armor=Math.min(0.75,(p.armor||0)+0.35); } },
+    { ico:'❤️', nm:'Titan',      ds:'+60% max HP',       apply:p=>{ p.maxhp=Math.round(p.maxhp*1.6); p.hp=p.maxhp; } },
+    { ico:'🍵', nm:"Monk's Vow", ds:'+5 HP/sec',         apply:p=>{ p.regen+=5; } },
   ],
-  'altar-utility': [  // Spirit Pool — tempo
-    { ico:'👣', nm:'Gale',      ds:'+22% move · −18% cooldowns · +15% dmg taken', apply:p=>{ p.speed*=1.22; p.baseSpeed*=1.22; p.haste*=0.82; p.armor=(p.armor||0)-0.15; } },
-    { ico:'💠', nm:'Avarice',   ds:'+50% ki · +40% pickup · −10% max HP',         apply:p=>{ p.xpMult=(p.xpMult||1)*1.5; p.magnet*=1.4; p.maxhp=Math.round(p.maxhp*0.9); p.hp=Math.min(p.hp,p.maxhp); } },
-    { ico:'🧲', nm:'Magnetize', ds:'+80% pickup range · +10% ki',                 apply:p=>{ p.magnet*=1.8; p.xpMult=(p.xpMult||1)*1.1; } },
+  'altar-utility': [  // Spirit Pool — pure tempo
+    { ico:'👣', nm:'Gale',      ds:'+22% move · −18% cooldowns', apply:p=>{ p.speed*=1.22; p.baseSpeed*=1.22; p.haste*=0.82; } },
+    { ico:'💠', nm:'Avarice',   ds:'+50% ki · +40% pickup',      apply:p=>{ p.xpMult=(p.xpMult||1)*1.5; p.magnet*=1.4; } },
+    { ico:'🧲', nm:'Magnetize', ds:'+80% pickup range · +10% ki', apply:p=>{ p.magnet*=1.8; p.xpMult=(p.xpMult||1)*1.1; } },
   ],
 };
 const ALTAR_BY_GROUP = { combat:'altar-combat', defense:'altar-defense', utility:'altar-utility' };
 const DRAFT_TITLES = {
   blessing:       ['Forgotten Shrine', 'A BLESSING'],
   arsenal:        ['Ronin’s Cache', 'ARM YOURSELF'],
-  'altar-combat': ['Smithy Altar',  'A DARK BARGAIN'],
-  'altar-defense':['Vigor Altar',   'A DARK BARGAIN'],
-  'altar-utility':['Spirit Altar',  'A DARK BARGAIN'],
+  'altar-combat': ['Smithy Altar',  'FORGE YOUR EDGE'],
+  'altar-defense':['Vigor Altar',   'STEEL YOURSELF'],
+  'altar-utility':['Spirit Altar',  'QUICKEN'],
 };
 function openBuildingDraft(kind){
   const pool = BUILDING_BOONS[kind];
@@ -2942,7 +2942,7 @@ function openBuildingDraft(kind){
     const card = document.createElement('div');
     card.className = 'card' + (altar ? ' new' : '');
     card.innerHTML = `<div class="ct"><span class="ico">${o.ico}</span><span class="nm">${o.nm}</span>`+
-                     `<span class="lv">${altar ? 'PACT' : 'BOON'}</span></div><div class="ds">${o.ds}</div>`;
+                     `<span class="lv">BOON</span></div><div class="ds">${o.ds}</div>`;
     card.onclick = ()=>{ o.apply(player); game.state = STATE.PLAY; showOnly(null); };
     elCards.appendChild(card);
   }

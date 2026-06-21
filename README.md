@@ -42,7 +42,7 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 - A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; razed camps leave campfire checkpoints. Zone bosses are spaced well apart so two different boss kinds never wake together
 - **Summoner nests** along the roads (the endless-horde source): walk near a dormant nest to wake its summoner and its spectral horde; kill the summoner to dissolve the horde; flee the leash to put it back to sleep; resting/dying resets them
 - **Camps & patrols** along the roads (the *finite* enemy source): packs of ordinary foes that wake on approach. Unlike nests they **don't respawn** — clear one and it stays cleared; flee mid-fight and survivors despawn but your kills stick. Only **resting at a campfire (or dying) re-arms them**
-- Clearing a special building grants a **run-scoped boon draft** (Shrine = Blessing, Cache = Arsenal, the three altars = build-defining pacts)
+- Clearing a special building grants a **run-scoped boon draft** (Shrine = Blessing, Cache = Arsenal, the three altars = build-defining pure-upside boons)
 - **Dojo hub** between runs — walkable room with training dummies, four guardian archers, and stations (Ryo Trader, Spirit Forge, The Road)
 - **Meta-progression**: earn **Ryo**, spend it on permanent upgrades at the Dojo's Ryo Trader; persisted in `localStorage` across runs
 - **Mini-games** (Samurai Soccer, Samurai Volley) — an Options-menu easter egg
