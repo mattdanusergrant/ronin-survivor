@@ -100,6 +100,11 @@ Search for these landmarks (line numbers drift; the names are stable):
   built-in authored map (`buildDefaultMap`); `loadGridMap(spec)` turns a v2 spec
   (default *or* `?map=custom`) into `game.grid` + buildings/nests/mobs/campfires.
   There is **no procedural generation** anymore.
+- **Water is grapple-only.** Water blocks walking like forest, but the grappling
+  hook (`updateGrapple`) flies *over* water and anchors only on forest/gate/enemy
+  /open-floor-at-max-range — and the reel skips `pushOutOfObstacles`. That's what
+  lets you cross moats to the default map's reward pockets. So: don't make water
+  bypass a gate (the walk-flood can't cross water, but the hook can).
 - **Zone gating:** `BUILDING_TYPES` defines each zone boss. Gates are terrain
   cells (`T_GATE`) linked to an owner building's `gateCells`; clearing that boss
   → `openGates(b)` carves them back to floor. Clearing a special building also

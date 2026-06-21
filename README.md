@@ -23,7 +23,7 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 
 - **Move** — WASD / arrow keys
 - **Dodge** — **double-tap** a movement key to dash that way (i-frames). Each direction has its **own cooldown**, so you can dash a different way instantly — you just can't spam the same one.
-- **Left-click** — **grappling hook** toward the cursor: anchors on the first wall/enemy/max-range and reels you in (i-frames)
+- **Left-click** — **grappling hook** toward the cursor: anchors on the first wall/enemy/max-range and reels you in (i-frames). It **flies over water**, so it's how you cross lakes to reach pockets and shortcuts
 - **Right-click** — **Chi Burst**: a targeted explosion centered on the cursor
 - **Throwing kunai** — auto-thrown at whatever enemy your **cursor hovers**, if it's in range (no click)
 - **Spacebar** — **Deflect Burst**: a brief parry window that knocks enemy projectiles back on their casters (good timing required). Also interacts when you're standing on something usable.
@@ -41,7 +41,7 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 - Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives
 - All projectiles (yours and theirs) and all enemy charge-up tells move at a **deliberate half-speed** — combat reads as dodge/parry timing, not bullet-dodging reflexes
 - Level-up boon draft (3-of-N, pauses time)
-- A **gated tile-grid world** (square tiles: floor / forest / water / gate): a built-in authored map of zones, each sealed by a gate that opens when you clear its boss; razed camps leave campfire checkpoints. Make your own in `mapbuilder.html`
+- A large, open **gated tile-grid world** (square tiles: floor / forest / water / gate): a built-in authored map — a wide Dojo plaza split by a lake, then a gated spiral of roomy zones (each sealed by a gate that opens when you clear its boss). **Water blocks walking but the grappling hook flies over it**, so there are grapple-only reward pockets and a lake shortcut. Make your own in `mapbuilder.html`
 - **Summoner nests** along the roads (the endless-horde source): walk near a dormant nest to wake its summoner and its spectral horde; kill the summoner to dissolve the horde; flee the leash to put it back to sleep; resting/dying resets them
 - **Camps & patrols** along the roads (the *finite* enemy source): packs of ordinary foes that wake on approach. Unlike nests they **don't respawn** — clear one and it stays cleared; flee mid-fight and survivors despawn but your kills stick. Only **resting at a campfire (or dying) re-arms them**
 - Clearing a special building grants a **run-scoped boon draft** (Shrine = Blessing, Cache = Arsenal, the three altars = build-defining pure-upside boons)

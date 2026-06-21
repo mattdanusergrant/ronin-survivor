@@ -120,4 +120,18 @@ Reworked the player kit:
 - Smoke test +4 cases (chi burst, per-direction dodge cd, grapple resolve, kunai
   throw) → 19/19.
 
+---
+
+## 6. Bigger, more open default map + grapple-over-water — ✅ DONE (2026-06-21)
+
+- Grapple now **flies over water** (anchors only on forest/gate/enemy/open-floor
+  at max range; the reel skips collision) — water is a grapple-only barrier.
+- Rebuilt `buildDefaultMap` at 96×96 (was 72×72): a wide Dojo plaza split by a
+  lake (walk the land-bridge or grapple across), a roomier gated spiral, and
+  **three grapple-only reward pockets** (campfire + tougher nest behind a moat).
+- Smoke test +1 (grapple flies across water onto the far shore) → 20/20.
+
+**Follow-up (not blocking):** pockets reward a campfire + nest only — could hold
+a real cache/boon. Tune moat widths vs. `HOOK_RANGE` (560) if any feels off.
+
 #LLM-generated

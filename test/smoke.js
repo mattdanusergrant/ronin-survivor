@@ -500,6 +500,28 @@ test('custom map loader: a hand-authored v2 spec loads into the world', () => {
   assert(w.spawn.x === 2.5*64 && w.spawn.y === 2.5*64, 'player spawn not at the authored cell center');
 });
 
+test('grapple over water: the hook flies across water and lands you on the far shore', () => {
+  art.newGame();
+  // controlled strip: floor | water(cols 4-6) | floor | forest backstop(col 13+)
+  const t = 64, cols = 20, rows = 5;
+  const cells = new Uint8Array(cols*rows).fill(art.T_FLOOR);
+  for (let r=0;r<rows;r++){
+    cells[r*cols+4]=art.T_WATER; cells[r*cols+5]=art.T_WATER; cells[r*cols+6]=art.T_WATER;
+    for (let c=13;c<cols;c++) cells[r*cols+c]=art.T_FOREST;   // backstop wall
+  }
+  art.game.grid = { cols, rows, tile:t, cells };
+  const p = art.player;
+  p.x = 1.5*t; p.y = 2.5*t;
+  p.hook = { phase:'out', x:p.x, y:p.y, dx:1, dy:0, ax:0, ay:0 };
+  let safety = 0;
+  while (p.hook && safety++ < 600) art.updateGrapple(1/60);
+  assert(!p.hook, 'hook never resolved crossing water');
+  assert(Number.isFinite(p.x), 'player x went NaN');
+  assert(p.x > 7*t, `hook anchored at/before the water instead of flying over it (x=${p.x})`);
+  const col = Math.floor(p.x/t), row = Math.floor(p.y/t);
+  assert(cells[row*cols+col] !== art.T_WATER, 'player ended up standing in water');
+});
+
 test('nest reset: resetNests puts every nest back to dormant and clears the horde', () => {
   art.newGame();
   // fake-activate a nest with a live summoned add

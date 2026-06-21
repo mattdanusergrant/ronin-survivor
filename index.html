@@ -538,77 +538,91 @@ const BUILDING_TYPES = {
 const TILE = 64;
 const T_FLOOR = 0, T_FOREST = 1, T_WATER = 2, T_GATE = 3;
 
-// The built-in default map — authored programmatically (deterministic, the
-// same layout every run). A gated chain: dojo → bandits(tutorial) → shrine →
-// smithy → cache → vigor → spirit, each sealed behind the previous boss.
+// The built-in default map — authored programmatically (deterministic, the same
+// layout every run). Large and open: a wide Dojo plaza with a central lake (walk
+// around it OR grapple across), a gated spiral of roomy zones, and three
+// grapple-only reward pockets walled off by water (the hook flies over water).
 function buildDefaultMap(){
-  const cols = 72, rows = 72;
+  const cols = 96, rows = 96;
   const cells = new Uint8Array(cols*rows).fill(T_FOREST);
   const set  = (c,r,v)=>{ if (c>=0&&r>=0&&c<cols&&r<rows) cells[r*cols+c]=v; };
-  const room = (cc,cr,w,h)=>{ const hw=w>>1, hh=h>>1;
-    for (let r=cr-hh;r<=cr+hh;r++) for (let c=cc-hw;c<=cc+hw;c++) set(c,r,T_FLOOR); };
+  const rect = (c0,c1,r0,r1,v)=>{ for (let r=r0;r<=r1;r++) for (let c=c0;c<=c1;c++) set(c,r,v); };
+  const room = (cc,cr,w,h)=>{ const hw=w>>1, hh=h>>1; rect(cc-hw,cc+hw,cr-hh,cr+hh,T_FLOOR); };
   const hall = (c0,c1,r)=>{ const a=Math.min(c0,c1),b=Math.max(c0,c1);
     for (let c=a;c<=b;c++) for (let d=-1;d<=1;d++) set(c,r+d,T_FLOOR); };
   const vall = (r0,r1,c)=>{ const a=Math.min(r0,r1),b=Math.max(r0,r1);
     for (let r=a;r<=b;r++) for (let d=-1;d<=1;d++) set(c+d,r,T_FLOOR); };
 
-  const dojo = { col:44, row:44 };
-  // Each zone is collinear with its parent, so every corridor is one straight
-  // run — clean to gate. depth = position in the chain.
-  const zones = [
-    { type:'bandits', col:44, row:32, tutorial:true },  // up from dojo
-    { type:'shrine',  col:60, row:32 },                 // right
-    { type:'smithy',  col:60, row:56 },                 // down
-    { type:'cache',   col:28, row:56 },                 // left
-    { type:'vigor',   col:28, row:32 },                 // up
-    { type:'spirit',  col:28, row:16 },                 // up
-  ];
+  const ents = [];
+  // ---- the Dojo plaza: a big open hub split by a lake ----
+  rect(38,58, 45,63, T_FLOOR);   // south plaza (dojo lives here)
+  rect(38,58, 36,40, T_FLOOR);   // north strip (the road on begins here)
+  const dojo = { col:48, row:59 };
 
-  room(dojo.col, dojo.row, 9, 9);
-  let prev = dojo, id = 1;
+  // ---- gated spiral chain (each zone collinear with its parent → clean gates) ----
+  const zones = [
+    { type:'bandits', col:48, row:24, tutorial:true },  // up from the plaza
+    { type:'shrine',  col:76, row:24 },                 // right
+    { type:'smithy',  col:76, row:68 },                 // down
+    { type:'cache',   col:20, row:68 },                 // left
+    { type:'vigor',   col:20, row:24 },                 // up
+    { type:'spirit',  col:20, row:10 },                 // up
+  ];
+  const neckStart = { col:48, row:40 };        // top of the plaza → z1 neck
+  let prev = neckStart, id = 1;
   for (const z of zones){
-    room(z.col, z.row, 7, 7);
+    room(z.col, z.row, 11, 9);
     if (prev.col === z.col) vall(prev.row, z.row, z.col);
     else                    hall(prev.col, z.col, z.row);
-    z.id = id++; z.depth = z.id;
-    z.parent = prev;
-    prev = z;
+    z.id = id++; z.depth = z.id; z.parent = prev; prev = z;
   }
 
-  // a small pond for flavour, tucked in the forest away from the corridors
-  for (let r=62;r<=67;r++) for (let c=48;c<=55;c++)
-    if ((c-51.5)*(c-51.5)/14 + (r-64.5)*(r-64.5)/7 < 1) set(c,r,T_WATER);
+  // ---- water + grapple-only reward pockets (carved AFTER the floors) ----
+  // central plaza lake: blocks the straight walk north; cross it by grappling,
+  // or take the east land-bridge the long way around.
+  rect(38,53, 41,44, T_WATER);   // the lake
+  rect(54,58, 41,44, T_FLOOR);   // east land-bridge (the walkable way around)
+  // pocket A — east of the Shrine, across a moat
+  rect(82,85, 21,29, T_WATER); rect(86,92, 21,29, T_FLOOR);
+  // pocket B — south of the Cache, across a moat
+  rect(14,26, 73,76, T_WATER); rect(14,26, 77,85, T_FLOOR);
+  // pocket C — west of the Vigor hall, across a moat
+  rect(8,14, 20,28, T_WATER);  rect(2,7,  20,28, T_FLOOR);
 
-  const ents = [];
   ents.push({ kind:'dojo', col:dojo.col, row:dojo.row });
   for (const z of zones)
     ents.push({ kind:'building', type:z.type, col:z.col, row:z.row, id:z.id, depth:z.depth, tutorial:!!z.tutorial });
 
-  // gate barricades: 3 cells across each corridor, owned by the PARENT zone so
-  // clearing that boss opens the road on. (The tutorial camp has no gate.)
+  // gates: 3 cells across each approach corridor, owned by the PARENT zone so
+  // clearing that boss opens the way on. (The tutorial camp has no gate.)
   for (let i=1;i<zones.length;i++){
     const z = zones[i], p = zones[i-1];
-    if (p.col === z.col){                 // vertical corridor → horizontal gate
-      const gr = (p.row + z.row) >> 1;
-      for (let c=z.col-1;c<=z.col+1;c++) ents.push({ kind:'gate', col:c, row:gr, owner:p.id });
-    } else {                              // horizontal corridor → vertical gate
-      const gc = (p.col + z.col) >> 1;
-      for (let r=z.row-1;r<=z.row+1;r++) ents.push({ kind:'gate', col:gc, row:r, owner:p.id });
-    }
+    if (p.col === z.col){ const gr=(p.row+z.row)>>1;
+      for (let c=z.col-1;c<=z.col+1;c++) ents.push({ kind:'gate', col:c, row:gr, owner:p.id }); }
+    else { const gc=(p.col+z.col)>>1;
+      for (let r=z.row-1;r<=z.row+1;r++) ents.push({ kind:'gate', col:gc, row:r, owner:p.id }); }
   }
 
-  // summoner nests + camps + patrols strung along the corridors (depth-scaled)
+  // nests + camps + patrols strung along the corridors (depth-scaled)
   const lerp = (a,b,t)=>Math.round(a+(b-a)*t);
-  zones.forEach((z,i)=>{
+  zones.forEach(z=>{
     const p = z.parent, d = z.depth;
     ents.push({ kind:'nest',   col:lerp(p.col,z.col,0.35), row:lerp(p.row,z.row,0.35), depth:d });
     ents.push({ kind:'patrol', col:lerp(p.col,z.col,0.6),  row:lerp(p.row,z.row,0.6),  depth:d });
     ents.push({ kind:'camp',   col:lerp(p.col,z.col,0.82), row:lerp(p.row,z.row,0.82), depth:d });
   });
+  // a couple of camps loose in the open plaza for early action
+  ents.push({ kind:'camp', col:42, row:50, depth:1 });
+  ents.push({ kind:'patrol', col:54, row:52, depth:1 });
+
+  // grapple-pocket rewards: a campfire checkpoint + a tougher nest in each
+  ents.push({ kind:'campfire', col:89, row:25 }); ents.push({ kind:'nest', col:88, row:25, depth:4 });
+  ents.push({ kind:'campfire', col:20, row:81 }); ents.push({ kind:'nest', col:20, row:80, depth:5 });
+  ents.push({ kind:'campfire', col:4,  row:24 }); ents.push({ kind:'nest', col:5,  row:24, depth:5 });
 
   // campfire checkpoints (dojo + one mid-route); razed bandit camps add more
-  ents.push({ kind:'campfire', col:dojo.col, row:dojo.row+3 });
-  ents.push({ kind:'campfire', col:60, row:53 });
+  ents.push({ kind:'campfire', col:dojo.col, row:dojo.row+2 });
+  ents.push({ kind:'campfire', col:76, row:64 });
   ents.push({ kind:'spawn', col:dojo.col, row:dojo.row });
 
   return { version:2, name:'Ronin Spiral', cols, rows, tile:TILE, terrain:Array.from(cells), entities:ents };
@@ -1149,10 +1163,15 @@ function updateGrapple(dt){
       }
     }
     if (h.phase === 'out'){
+      // the hook flies OVER water (that's how you cross it) — it anchors only on
+      // forest/gate, on an enemy (above), or at max range over open floor.
       const t = game.grid ? game.grid.tile : TILE;
-      const solid = tileSolidCR(Math.floor(h.x/t), Math.floor(h.y/t));
-      if (solid){ h.ax = h.x - h.dx*(P.r+10); h.ay = h.y - h.dy*(P.r+10); h.phase='pull'; }  // land in front of the wall
-      else if (Math.hypot(h.x-P.x, h.y-P.y) >= HOOK_RANGE){ h.ax=h.x; h.ay=h.y; h.phase='pull'; }
+      const v = tileAtCR(Math.floor(h.x/t), Math.floor(h.y/t));
+      if (v === T_FOREST || v === T_GATE){ h.ax = h.x - h.dx*(P.r+10); h.ay = h.y - h.dy*(P.r+10); h.phase='pull'; }  // land in front of the wall
+      else if (Math.hypot(h.x-P.x, h.y-P.y) >= HOOK_RANGE){
+        if (v === T_WATER) P.hook = null;                                // fizzles over open water
+        else { h.ax = h.x; h.ay = h.y; h.phase='pull'; }                 // open-ground dash
+      }
     }
   } else {                                   // reel in (i-frames; bail if we get stuck)
     const dx=h.ax-P.x, dy=h.ay-P.y, d=Math.hypot(dx,dy)||1, step=HOOK_PULL*dt;
@@ -1954,7 +1973,8 @@ function update(dt){
     P.y = clamp(P.y, -hh, hh);
     game.cam.x = 0; game.cam.y = 0;       // fixed camera
   } else {
-    pushOutOfObstacles(P);                // solid tiles shove you out
+    // a grapple reel flies you over water/walls; don't fight it with collision
+    if (!(P.hook && P.hook.phase === 'pull')) pushOutOfObstacles(P);
     worldClamp(P);                        // keep inside the grid bounds
     game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
     game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
