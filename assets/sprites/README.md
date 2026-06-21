@@ -25,6 +25,10 @@ entity, plus `prompts.md` for the house-style image prompts).
 | `boss` | `boss.png` | 48×48 | Camp boss | **wired** |
 | `kiOrb` | `ki-orb.png` | 24×24 | Ki pickup orb | **wired** |
 | `sword` | `sword.png` | tall, e.g. 16×48 | Katana slash — sweeps along the attack arc | **wired** |
+| `tileFloor` | `tile-floor.png` | 64×64 | Terrain: walkable floor/road | **wired** |
+| `tileForest` | `tile-forest.png` | 64×64 | Terrain: forest wall (blocks movement) | **wired** |
+| `tileWater` | `tile-water.png` | 64×64 | Terrain: water (blocks movement) | **wired** |
+| `tileGate` | `tile-gate.png` | 64×64 | Terrain: closed boss gate | **wired** |
 
 **Sword orientation:** draw it **tip-right, handle at the left**, blade running
 horizontally, transparent background. The game pivots it from the player's hand

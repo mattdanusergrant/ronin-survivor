@@ -309,6 +309,11 @@ const SPRITE_MANIFEST = {
   boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },  // wired (drawOrb)
   sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc); tip-right, non-square art (canvas resizes to native on load)
+  // terrain tileset — drop 64×64 PNGs to skin the grid (drawTile fallback art otherwise)
+  tileFloor:  { file: 'tile-floor.png',  size: 64 },  // wired (drawTile)
+  tileForest: { file: 'tile-forest.png', size: 64 },  // wired (drawTile)
+  tileWater:  { file: 'tile-water.png',  size: 64 },  // wired (drawTile)
+  tileGate:   { file: 'tile-gate.png',   size: 64 },  // wired (drawTile)
 };
 const SPR = (() => {
   const reg = {};
@@ -519,474 +524,203 @@ const BUILDING_TYPES = {
   spirit:  { name:'Spirit Pool',    ico:'⚡', tag:'Utility altar', color:'#4fa098', shopGroup:'utility',
              boss: { name:'The Trickster',   hp:340, speed:62, dmg:18, r:24, xp:42 } },
 };
-// The world is a gated spiral. The Dojo sits at the center of the map; a
-// single straight "tutorial" road leads to the first bandit camp, and from
-// there the chain of zones wraps outward around the Dojo. Every building is
-// a zone boss whose gates block the road onward until it falls. Mid and
-// outer zones also hide a gated return road straight home — clearing them
-// opens a shortcut to the Dojo, which doubles as an enemy lane.
-function generateBuildings(){
-  const dojo = makeBuilding('dojo', 0, 0);
-  dojo.depth = 0;
-  const out = [dojo];
-  // Zone 1 is always the tutorial bandit camp; the rest is a shuffled mix that
-  // guarantees all five special buildings appear (plus two more camps), so the
-  // sequence of zone rewards differs every run.
-  const order = ['bandits', ...shuffle(['shrine','cache','smithy','vigor','spirit','bandits','bandits'])];
-  const returnAt = new Set([3, 5, 7]);     // chain indices that earn a road home
-  let th = rand(0, TAU), parent = dojo;
-  for (let i=1; i<=order.length; i++){
-    // Wider radial step so adjacent zone bosses (always different kinds) stay
-    // far apart — two boss trigger-zones (CAMP_TRIGGER_R) can't overlap now.
-    const r = 800 + (i-1)*480 + rand(-50, 50);
-    // first leg is the straight tutorial road; afterwards the bearing
-    // advances so the chain spirals outward around the Dojo
-    if (i > 1) th += clamp(950 / r, 0.45, 1.0) + rand(-0.06, 0.06);
-    const b = makeBuilding(order[i-1], Math.cos(th)*r, Math.sin(th)*r);
-    b.parent = parent; b.depth = i;
-    if (i === 1) b.tutorial = true;
-    if (returnAt.has(i)) b.hasReturn = true;
-    out.push(b);
-    parent = b;
+// =====================================================================
+//  GRID WORLD — the map is a square tile grid (TILE px per cell). Terrain
+//  ids: 0 floor (walkable) · 1 forest · 2 water · 3 gate (closed; opens when
+//  its owner boss falls). Out-of-bounds reads as solid forest. Entities
+//  (dojo, zone buildings, summoner nests, camps/patrols, campfires, player
+//  spawn) are authored at tile coords. The default world is one built-in
+//  authored map; index.html?map=custom loads a map made in mapbuilder.html.
+//  No procedural generation, no forest circles, no flood-fill seal checks —
+//  what's painted is what you play. Projectiles still fly over everything;
+//  only movement collides with solid tiles.
+// =====================================================================
+const TILE = 64;
+const T_FLOOR = 0, T_FOREST = 1, T_WATER = 2, T_GATE = 3;
+
+// The built-in default map — authored programmatically (deterministic, the
+// same layout every run). A gated chain: dojo → bandits(tutorial) → shrine →
+// smithy → cache → vigor → spirit, each sealed behind the previous boss.
+function buildDefaultMap(){
+  const cols = 72, rows = 72;
+  const cells = new Uint8Array(cols*rows).fill(T_FOREST);
+  const set  = (c,r,v)=>{ if (c>=0&&r>=0&&c<cols&&r<rows) cells[r*cols+c]=v; };
+  const room = (cc,cr,w,h)=>{ const hw=w>>1, hh=h>>1;
+    for (let r=cr-hh;r<=cr+hh;r++) for (let c=cc-hw;c<=cc+hw;c++) set(c,r,T_FLOOR); };
+  const hall = (c0,c1,r)=>{ const a=Math.min(c0,c1),b=Math.max(c0,c1);
+    for (let c=a;c<=b;c++) for (let d=-1;d<=1;d++) set(c,r+d,T_FLOOR); };
+  const vall = (r0,r1,c)=>{ const a=Math.min(r0,r1),b=Math.max(r0,r1);
+    for (let r=a;r<=b;r++) for (let d=-1;d<=1;d++) set(c+d,r,T_FLOOR); };
+
+  const dojo = { col:44, row:44 };
+  // Each zone is collinear with its parent, so every corridor is one straight
+  // run — clean to gate. depth = position in the chain.
+  const zones = [
+    { type:'bandits', col:44, row:32, tutorial:true },  // up from dojo
+    { type:'shrine',  col:60, row:32 },                 // right
+    { type:'smithy',  col:60, row:56 },                 // down
+    { type:'cache',   col:28, row:56 },                 // left
+    { type:'vigor',   col:28, row:32 },                 // up
+    { type:'spirit',  col:28, row:16 },                 // up
+  ];
+
+  room(dojo.col, dojo.row, 9, 9);
+  let prev = dojo, id = 1;
+  for (const z of zones){
+    room(z.col, z.row, 7, 7);
+    if (prev.col === z.col) vall(prev.row, z.row, z.col);
+    else                    hall(prev.col, z.col, z.row);
+    z.id = id++; z.depth = z.id;
+    z.parent = prev;
+    prev = z;
   }
-  return out;
-}
-function shuffle(arr){
-  for (let i=arr.length-1; i>0; i--){ const j=(Math.random()*(i+1))|0; [arr[i],arr[j]]=[arr[j],arr[i]]; }
-  return arr;
-}
 
-// ---------- THE MAZE ----------
-// The run-world is a solid mass of forest (thickets + lakes) with roads
-// carved through it, laid out as a gated spiral: one straight tutorial road
-// from the central Dojo to the first bandit camp, then a chain of winding
-// roads wrapping outward around the Dojo through deeper zones. Each zone
-// boss padlocks the road onward (and, for mid/outer zones, a return road
-// shortcut home) with barricade gates that come down when it's cleared.
-// Movable entities collide with the forest circles; projectiles fly over.
-const MAZE = {
-  R: 4700,             // forest fill radius — past the last building it's solid wall
-  HW: 85,              // corridor half-width (min carved path width = 2×HW)
-  CLEAR_BUILDING: 230, // open ground around every building
-  CLEAR_CAMPFIRE: 150, // open ground around every campfire
-  STEP: 120, RMIN: 105, RMAX: 145, // fill grid spacing + wall-circle radii (overlap ⇒ no gaps)
-};
+  // a small pond for flavour, tucked in the forest away from the corridors
+  for (let r=62;r<=67;r++) for (let c=48;c<=55;c++)
+    if ((c-51.5)*(c-51.5)/14 + (r-64.5)*(r-64.5)/7 < 1) set(c,r,T_WATER);
 
-function distToSeg(px, py, s){
-  const dx = s.x2 - s.x1, dy = s.y2 - s.y1;
-  const l2 = dx*dx + dy*dy;
-  const t = l2 ? clamp(((px - s.x1)*dx + (py - s.y1)*dy) / l2, 0, 1) : 0;
-  return Math.hypot(px - (s.x1 + dx*t), py - (s.y1 + dy*t));
-}
+  const ents = [];
+  ents.push({ kind:'dojo', col:dojo.col, row:dojo.row });
+  for (const z of zones)
+    ents.push({ kind:'building', type:z.type, col:z.col, row:z.row, id:z.id, depth:z.depth, tutorial:!!z.tutorial });
 
-// Subdivide a straight connection into a winding polyline. Both ends keep a
-// rigid straight stub: junction bearings must be stable, or jitter near a
-// building can swing two corridors together and break a gate's seal.
-function windPath(ax, ay, bx, by){
-  const len = Math.hypot(bx-ax, by-ay);
-  // Coincident/near-coincident endpoints (possible from a hand-authored custom
-  // map) would make ux/uy NaN and poison every downstream path/gate/flood check.
-  if (len < 1e-3) return [{x:ax, y:ay}, {x:bx, y:by}];
-  const ux = (bx-ax)/len, uy = (by-ay)/len, nx = -uy, ny = ux;
-  const stub = Math.min(550, len*0.3);
-  const pts = [{x:ax, y:ay}, {x:ax+ux*stub, y:ay+uy*stub}];
-  const inner = len - 2*stub;
-  const n = Math.max(1, Math.round(inner/450));
-  for (let i=1; i<n; i++){
-    const t = i/n, off = rand(-1, 1) * Math.min(240, inner*0.22);
-    pts.push({ x: ax+ux*(stub+inner*t) + nx*off, y: ay+uy*(stub+inner*t) + ny*off });
-  }
-  pts.push({x:bx-ux*stub, y:by-uy*stub});
-  pts.push({x:bx, y:by});
-  return pts;
-}
-
-// A road is only a gate if zones can't touch by accident: every non-adjacent
-// corridor and building must stay far enough away that the forest between
-// them never thins through.
-function pathKeepsItsDistance(pts, b, buildings, edges){
-  for (let k=1; k<pts.length; k++){
-    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1, n = Math.ceil(L/80);
-    for (let s=0; s<=n; s++){
-      const x = a.x+(c.x-a.x)*s/n, y = a.y+(c.y-a.y)*s/n;
-      // junction areas around this road's own endpoints are exempt
-      if (Math.hypot(x-b.x, y-b.y) < 420 || Math.hypot(x-b.parent.x, y-b.parent.y) < 420) continue;
-      for (const o of buildings)
-        if (o !== b && o !== b.parent && Math.hypot(o.x-x, o.y-y) < 520) return false;
-      for (const e of edges)
-        for (let m=1; m<e.pts.length; m++)
-          if (distToSeg(x, y, { x1:e.pts[m-1].x, y1:e.pts[m-1].y, x2:e.pts[m].x, y2:e.pts[m].y }) < 500) return false;
+  // gate barricades: 3 cells across each corridor, owned by the PARENT zone so
+  // clearing that boss opens the road on. (The tutorial camp has no gate.)
+  for (let i=1;i<zones.length;i++){
+    const z = zones[i], p = zones[i-1];
+    if (p.col === z.col){                 // vertical corridor → horizontal gate
+      const gr = (p.row + z.row) >> 1;
+      for (let c=z.col-1;c<=z.col+1;c++) ents.push({ kind:'gate', col:c, row:gr, owner:p.id });
+    } else {                              // horizontal corridor → vertical gate
+      const gc = (p.col + z.col) >> 1;
+      for (let r=z.row-1;r<=z.row+1;r++) ents.push({ kind:'gate', col:gc, row:r, owner:p.id });
     }
   }
+
+  // summoner nests + camps + patrols strung along the corridors (depth-scaled)
+  const lerp = (a,b,t)=>Math.round(a+(b-a)*t);
+  zones.forEach((z,i)=>{
+    const p = z.parent, d = z.depth;
+    ents.push({ kind:'nest',   col:lerp(p.col,z.col,0.35), row:lerp(p.row,z.row,0.35), depth:d });
+    ents.push({ kind:'patrol', col:lerp(p.col,z.col,0.6),  row:lerp(p.row,z.row,0.6),  depth:d });
+    ents.push({ kind:'camp',   col:lerp(p.col,z.col,0.82), row:lerp(p.row,z.row,0.82), depth:d });
+  });
+
+  // campfire checkpoints (dojo + one mid-route); razed bandit camps add more
+  ents.push({ kind:'campfire', col:dojo.col, row:dojo.row+3 });
+  ents.push({ kind:'campfire', col:60, row:53 });
+  ents.push({ kind:'spawn', col:dojo.col, row:dojo.row });
+
+  return { version:2, name:'Ronin Spiral', cols, rows, tile:TILE, terrain:Array.from(cells), entities:ents };
+}
+
+// Instantiate a v2 grid spec into the live world: a terrain grid + entity
+// lists the run systems already understand (buildings, nests, mobs, campfires).
+function loadGridMap(spec){
+  const cols = spec.cols, rows = spec.rows, tile = spec.tile || TILE;
+  const cells = Uint8Array.from(spec.terrain);
+  const grid = { cols, rows, tile, cells };
+  const cx = c => (c+0.5)*tile, cy = r => (r+0.5)*tile;
+  const buildings = [], nests = [], mobs = [], campfires = [], byId = {};
+  let spawn = { x: cols*tile/2, y: rows*tile/2 };
+
+  for (const e of spec.entities){
+    if (e.kind === 'dojo'){
+      const b = makeBuilding('dojo', cx(e.col), cy(e.row));
+      b.depth = 0; b.id = 0; b.state = 'cleared'; b.gateCells = [];
+      buildings.push(b); byId[0] = b;
+    } else if (e.kind === 'building'){
+      const b = makeBuilding(e.type, cx(e.col), cy(e.row));
+      b.depth = e.depth || 1; b.id = e.id; b.tutorial = !!e.tutorial; b.gateCells = [];
+      buildings.push(b); byId[e.id] = b;
+    }
+  }
+  for (const e of spec.entities){
+    if (e.kind !== 'gate') continue;
+    if (e.col<0||e.row<0||e.col>=cols||e.row>=rows) continue;
+    const idx = e.row*cols + e.col;
+    cells[idx] = T_GATE;
+    const owner = byId[e.owner];
+    if (owner) owner.gateCells.push(idx);
+  }
+  for (const e of spec.entities){
+    if (e.kind === 'nest')
+      nests.push({ x:cx(e.col), y:cy(e.row), depth:e.depth||1, state:'dormant', summoner:null, _id:_nid++ });
+    else if (e.kind === 'camp' || e.kind === 'patrol')
+      mobs.push(makeMobGroup(cx(e.col), cy(e.row), e.kind, e.depth||1));
+    else if (e.kind === 'campfire')
+      campfires.push({ x:cx(e.col), y:cy(e.row), r:60 });
+    else if (e.kind === 'spawn')
+      spawn = { x:cx(e.col), y:cy(e.row) };
+  }
+  return { grid, buildings, nests, mobs, campfires, spawn };
+}
+
+// ---------- tile collision (replaces the old forest-circle obstacle grid) ----------
+function tileAtCR(col, row){
+  const g = game.grid;
+  if (!g || col<0 || row<0 || col>=g.cols || row>=g.rows) return T_FOREST;  // OOB = solid
+  return g.cells[row*g.cols + col];
+}
+function tileSolidCR(col, row){ const v = tileAtCR(col, row); return v===T_FOREST || v===T_WATER || v===T_GATE; }
+// True if a circle at (x,y) radius r clears every solid tile it overlaps.
+function isWalkable(x, y, r){
+  const t = game.grid ? game.grid.tile : TILE;
+  const c0=Math.floor((x-r)/t), c1=Math.floor((x+r)/t), r0=Math.floor((y-r)/t), r1=Math.floor((y+r)/t);
+  for (let row=r0; row<=r1; row++) for (let col=c0; col<=c1; col++) if (tileSolidCR(col,row)) return false;
   return true;
 }
-
-// A return road may converge with other roads only at its two ends (its own
-// zone and the Dojo junction) — anywhere else the forest must stay solid, or
-// it would breach a zone it's supposed to bypass.
-function returnRoadOK(pts, b, dojo, buildings, edges){
-  for (let k=1; k<pts.length; k++){
-    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1, n = Math.ceil(L/80);
-    for (let s=0; s<=n; s++){
-      const x = a.x+(c.x-a.x)*s/n, y = a.y+(c.y-a.y)*s/n;
-      if (Math.hypot(x-b.x, y-b.y) < 420 || Math.hypot(x-dojo.x, y-dojo.y) < 380) continue;
-      for (const o of buildings)
-        if (o !== b && o !== dojo && Math.hypot(o.x-x, o.y-y) < 520) return false;
-      for (const e of edges)
-        for (let m=1; m<e.pts.length; m++)
-          if (distToSeg(x, y, { x1:e.pts[m-1].x, y1:e.pts[m-1].y, x2:e.pts[m].x, y2:e.pts[m].y }) < 500) return false;
+// Shove an entity out of any solid tile it overlaps (circle-vs-AABB per cell).
+function pushOutOfObstacles(e){
+  const g = game.grid; if (!g) return;
+  const t = g.tile, r = e.r;
+  const cc = Math.floor(e.x/t), cr = Math.floor(e.y/t);
+  for (let row=cr-1; row<=cr+1; row++) for (let col=cc-1; col<=cc+1; col++){
+    if (!tileSolidCR(col,row)) continue;
+    const minx=col*t, miny=row*t, maxx=minx+t, maxy=miny+t;
+    const nx=clamp(e.x,minx,maxx), ny=clamp(e.y,miny,maxy);
+    const dx=e.x-nx, dy=e.y-ny, d2=dx*dx+dy*dy;
+    if (d2 >= r*r) continue;
+    if (d2 > 1e-6){ const d=Math.sqrt(d2); e.x += dx/d*(r-d); e.y += dy/d*(r-d); }
+    else {                                   // center inside the tile — eject least-penetration axis
+      const l=e.x-minx, ri=maxx-e.x, tp=e.y-miny, bt=maxy-e.y, m=Math.min(l,ri,tp,bt);
+      if (m===l) e.x=minx-r; else if (m===ri) e.x=maxx+r; else if (m===tp) e.y=miny-r; else e.y=maxy+r;
     }
   }
-  return true;
 }
-
-function generatePaths(buildings){
-  const edges = [], segs = [];
-  const addSegs = pts => { for (let k=1; k<pts.length; k++) segs.push({ x1:pts[k-1].x, y1:pts[k-1].y, x2:pts[k].x, y2:pts[k].y }); };
-  // one corridor per tree edge. The tutorial road is dead straight; deeper
-  // roads wind, re-rolled if they stray near an unrelated zone.
-  for (const b of buildings){
-    if (!b.parent) continue;
-    let pts = null;
-    if (b.tutorial) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];
-    else {
-      for (let t=0; t<12 && !pts; t++){
-        const cand = windPath(b.parent.x, b.parent.y, b.x, b.y);
-        if (pathKeepsItsDistance(cand, b, buildings, edges)) pts = cand;
-      }
-      if (!pts) pts = [{x:b.parent.x, y:b.parent.y}, {x:b.x, y:b.y}];   // straight fallback
-    }
-    b.edgePts = pts;                       // oriented parent → b
-    edges.push({ pts, of: b });
-    addSegs(pts);
-  }
-  // return roads: mid/outer zones hide a winding road straight home. Carved
-  // now, but sealed at the zone end by that zone's own gates until cleared.
-  const dojo = buildings[0];
-  for (const b of buildings){
-    if (!b.hasReturn) continue;
-    let pts = null;
-    for (let t=0; t<12 && !pts; t++){
-      const cand = windPath(b.x, b.y, dojo.x, dojo.y);
-      if (returnRoadOK(cand, b, dojo, buildings, edges)) pts = cand;
-    }
-    if (!pts) pts = [{x:b.x, y:b.y}, {x:dojo.x, y:dojo.y}];  // straight fallback
-    b.returnPts = pts;                     // oriented b → Dojo
-    edges.push({ pts, of: b, isReturn: true });
-    addSegs(pts);
-  }
-  // marcher route per building: own road reversed, then each ancestor's,
-  // ending at the Dojo
-  for (const b of buildings){
-    if (!b.parent) continue;
-    const route = [];
-    let u = b;
-    while (u && u.parent){
-      const rev = u.edgePts.slice().reverse();
-      for (const p of rev) route.push(p);
-      u = u.parent;
-    }
-    b.route = route;
-  }
-  return { edges, segs };
+// Keep an entity inside the grid bounds.
+function worldClamp(e){
+  const g = game.grid; if (!g) return; const t = g.tile;
+  e.x = clamp(e.x, e.r, g.cols*t - e.r);
+  e.y = clamp(e.y, e.r, g.rows*t - e.r);
 }
-
-// Walk forward along a polyline by dist; returns the point + unit perpendicular.
-function walkAlong(pts, dist){
-  let remain = dist;
-  for (let k=1; k<pts.length; k++){
-    const a = pts[k-1], c = pts[k], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
-    if (remain <= L){
-      const t = remain/L;
-      return { x:a.x+(c.x-a.x)*t, y:a.y+(c.y-a.y)*t, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
-    }
-    remain -= L;
-  }
-  const a = pts[pts.length-2], c = pts[pts.length-1], L = Math.hypot(c.x-a.x, c.y-a.y) || 1;
-  return { x:c.x, y:c.y, nx:-(c.y-a.y)/L, ny:(c.x-a.x)/L };
-}
-
-// Every zone boss padlocks the roads to its children: a barricade of gate
-// circles across each child corridor just past the boss's clearing. They
-// come down (openGates) when the boss building is cleared.
-function generateGates(buildings){
-  const gates = [];
-  const barricade = (pts, owner, along) => {
-    const p = walkAlong(pts, along);
-    const set = [];
-    for (const off of [-150, -50, 50, 150])
-      set.push({ type:'gate', x:p.x + p.nx*off, y:p.y + p.ny*off, r:62, owner });
-    (owner.gates = owner.gates || []).push(...set);
-    gates.push(...set);
-  };
-  for (const b of buildings){
-    // the road onward to b, sealed by b's parent boss
-    if (b.parent && b.parent.type !== 'dojo') barricade(b.edgePts, b.parent, MAZE.CLEAR_BUILDING + 150);
-    // b's own return road home, sealed (at the b end) until b falls. Placed
-    // farther out than the onward gate — past the junction zone where other
-    // corridors may legally run close — so nothing can slip around it.
-    if (b.returnPts) barricade(b.returnPts, b, MAZE.CLEAR_BUILDING + 320);
-  }
-  return gates;
-}
+// A zone boss fell → carve its gate cells back to floor.
 function openGates(b){
-  if (!b.gates || !b.gates.length) return;
-  for (const g of b.gates){
-    g.dead = true;
+  if (!b.gateCells || !b.gateCells.length || !game.grid) return;
+  const g = game.grid, t = g.tile;
+  for (const idx of b.gateCells){
+    g.cells[idx] = T_FLOOR;
+    const col = idx % g.cols, row = (idx / g.cols)|0;
+    const x=(col+0.5)*t, y=(row+0.5)*t;
     for (let i=0;i<8;i++){ const a=rand(0,TAU), sp=rand(60,160);
-      fx.push({ kind:'spark', x:g.x, y:g.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#b58a3a' }); }
+      fx.push({ kind:'spark', x, y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.4,.7), c:'#b58a3a' }); }
   }
-  b.gates = [];
-  game.obstacles = game.obstacles.filter(o => !o.dead);
-  game.obGrid = buildObstacleGrid(game.obstacles);
-}
-// Flood-fill machinery shared by the soundness checks: a walkable-grid flood
-// from the Dojo with a mutable set of "simulated cleared" buildings whose
-// gates are treated as open.
-function makeFlood(obstacles){
-  const R = MAZE.R, CELL = 44, N = Math.ceil(2*R/CELL);
-  const grid = new Map();
-  for (const o of obstacles){
-    const x0 = Math.floor((o.x-o.r)/OBGRID_CELL), x1 = Math.floor((o.x+o.r)/OBGRID_CELL);
-    const y0 = Math.floor((o.y-o.r)/OBGRID_CELL), y1 = Math.floor((o.y+o.r)/OBGRID_CELL);
-    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
-      const k = cx + ',' + cy;
-      let c = grid.get(k);
-      if (!c) grid.set(k, c = []);
-      c.push(o);
-    }
-  }
-  const open = new Set();              // buildings whose gates are simulated down
-  const walkable = (x, y) => {
-    const x0 = Math.floor((x-14)/OBGRID_CELL), x1 = Math.floor((x+14)/OBGRID_CELL);
-    const y0 = Math.floor((y-14)/OBGRID_CELL), y1 = Math.floor((y+14)/OBGRID_CELL);
-    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
-      const cell = grid.get(cx + ',' + cy);
-      if (!cell) continue;
-      for (const o of cell){
-        if (o.type === 'gate' && open.has(o.owner)) continue;
-        const dx = x-o.x, dy = y-o.y, m = o.r + 13;
-        if (dx*dx + dy*dy < m*m) return false;
-      }
-    }
-    return true;
-  };
-  const flood = () => {
-    const seen = new Uint8Array(N*N);
-    const c0 = Math.floor(R/CELL);     // dojo is at the world origin
-    const stack = [c0*N + c0];
-    seen[stack[0]] = 1;
-    while (stack.length){
-      const i = stack.pop(), cx = i % N, cy = (i / N) | 0;
-      for (let d=0; d<4; d++){
-        const nx = cx + (d===0) - (d===1), ny = cy + (d===2) - (d===3);
-        if (nx<0 || ny<0 || nx>=N || ny>=N) continue;
-        const j = ny*N + nx;
-        if (seen[j]) continue;
-        const wx = nx*CELL - R + CELL/2, wy = ny*CELL - R + CELL/2;
-        if (wx*wx + wy*wy > R*R) continue;
-        if (!walkable(wx, wy)) continue;
-        seen[j] = 1; stack.push(j);
-      }
-    }
-    return seen;
-  };
-  const reach = (seen, b) => {
-    const cx = Math.floor((b.x+R)/CELL), cy = Math.floor((b.y+R)/CELL);
-    for (let dy=-3; dy<=3; dy++) for (let dx=-3; dx<=3; dx++){
-      const nx = cx+dx, ny = cy+dy;
-      if (nx>=0 && ny>=0 && nx<N && ny<N && seen[ny*N+nx]) return true;
-    }
-    return false;
-  };
-  return { open, flood, reach };
+  b.gateCells = [];
 }
 
-// Headless soundness check on a freshly generated world: walk the chain,
-// flood-filling the walkable grid from the Dojo at each step — every zone
-// must be sealed until its predecessor falls and reachable right after.
-// Rare corridor jitter can merge two roads and breach a gate; the caller
-// rerolls the whole world when that happens.
-function worldIsSound(buildings, obstacles){
-  const { open, flood, reach } = makeFlood(obstacles);
-  for (let step=1; step<buildings.length; step++){
-    const seen = flood();
-    if (!reach(seen, buildings[step])) return false;
-    for (let later=step+1; later<buildings.length; later++)
-      if (reach(seen, buildings[later])) return false;
-    open.add(buildings[step]);
-  }
-  return true;
-}
-
-// Branching-aware variant for custom maps (the linear walk above assumes a
-// pure chain). Per building: reachable once all its ancestors are cleared,
-// and — the strong seal test — unreachable while its parent boss stands even
-// if every other gate in the world is down. Children of the Dojo are ungated
-// by design, so the seal test skips them.
-function customWorldIsSound(buildings, obstacles){
-  const { open, flood, reach } = makeFlood(obstacles);
-  for (const b of buildings){
-    if (!b.parent) continue;
-    open.clear();
-    for (let u = b.parent; u; u = u.parent) open.add(u);
-    if (!reach(flood(), b)) return false;
-    if (b.parent.type !== 'dojo'){
-      open.clear();
-      for (const o of buildings) if (o !== b && o !== b.parent) open.add(o);
-      if (reach(flood(), b)) return false;
-    }
-  }
-  return true;
-}
-
-// ---------- custom maps (built in mapbuilder.html) ----------
-// Played via index.html?map=custom; the spec travels through localStorage.
-// Spec: { version, name, buildings: [{type,x,y,parent,straight,hasReturn}] }
-// — buildings[0] is the Dojo (pinned to the origin), parent is an index into
-// the array and always precedes its children.
+// ---------- custom maps (?map=custom) ----------
 const CUSTOM_MAP_KEY = 'ronin-custom-map';
-function loadCustomMapSpec(){
+function loadCustomGridMap(){
   try {
     const s = JSON.parse(localStorage.getItem(CUSTOM_MAP_KEY) || 'null');
-    if (!s || !Array.isArray(s.buildings) || s.buildings.length < 2) return null;
-    if (s.buildings[0].type !== 'dojo') return null;
-    for (let i=1; i<s.buildings.length; i++){
-      const e = s.buildings[i];
-      if (!BUILDING_TYPES[e.type] || e.type === 'dojo') return null;
-      if (!(e.parent >= 0 && e.parent < i)) return null;
-      if (!isFinite(e.x) || !isFinite(e.y)) return null;
-      // reject a building sitting on top of its parent — a zero-length road has
-      // no direction and can't be gated or flooded (would degenerate worldgen)
-      const par = s.buildings[e.parent];
-      if (Math.hypot(e.x - par.x, e.y - par.y) < 40) return null;
-    }
+    if (!s || s.version !== 2 || !Array.isArray(s.terrain) || !s.cols || !s.rows) return null;
+    if (s.terrain.length !== s.cols*s.rows) return null;
+    if (!Array.isArray(s.entities)) return null;
     return s;
   } catch { return null; }
 }
-const CUSTOM_MAP = typeof location !== 'undefined' &&
-  new URLSearchParams(location.search).get('map') === 'custom' ? loadCustomMapSpec() : null;
-function buildingsFromSpec(spec){
-  const out = spec.buildings.map((e, i) =>
-    makeBuilding(e.type, i ? Math.round(e.x) : 0, i ? Math.round(e.y) : 0));
-  out[0].depth = 0;
-  for (let i=1; i<out.length; i++){
-    const e = spec.buildings[i], b = out[i];
-    b.parent = out[e.parent];
-    b.depth = b.parent.depth + 1;
-    if (e.straight) b.tutorial = true;     // tutorial flag ⇒ dead-straight road
-    if (e.hasReturn) b.hasReturn = true;
-  }
-  return out;
-}
-
-// Fill everything that isn't road or clearing with solid forest.
-function generateObstacles(buildings, paths){
-  const out = [];
-  const { R, STEP, HW } = MAZE;
-  const onPath = (x,y,rr)=>{ for (const s of paths.segs){ if (distToSeg(x,y,s) < HW + rr) return true; } return false; };
-  const nearBuilding = (x,y,rr)=> buildings.some(b => Math.hypot(b.x-x, b.y-y) < MAZE.CLEAR_BUILDING + rr);
-
-  // ---- PASS 1: large water bodies, placed FIRST so trees fill around them.
-  // Each body is a seed circle plus a few overlapping lobes → organic blob.
-  const lakes = [];
-  const target = Math.round((R*R) / (700*700));   // ~one body per 700u of area
-  let tries = 0;
-  while (lakes.length < target && tries < target*50){
-    tries++;
-    const ang = rand(0,TAU), rad = Math.sqrt(Math.random())*R;   // uniform over the disc
-    const cx = Math.cos(ang)*rad, cy = Math.sin(ang)*rad;
-    const baseR = rand(150, 300);                                // large
-    if (cx*cx + cy*cy > (R-baseR)*(R-baseR)) continue;
-    if (nearBuilding(cx, cy, baseR + 60) || onPath(cx, cy, baseR + 40)) continue;
-    if (lakes.some(l => Math.hypot(l.cx-cx, l.cy-cy) < l.baseR + baseR + 140)) continue;  // keep bodies distinct
-    const body = { cx, cy, baseR, maxR: baseR, circles: [{ x:cx, y:cy, r:baseR }] };
-    const lobes = 3 + (Math.random()*4|0);
-    for (let i=0;i<lobes;i++){
-      const a = rand(0,TAU), dd = rand(baseR*0.4, baseR*0.9), rr = baseR*rand(0.5,0.85);
-      const lx = cx+Math.cos(a)*dd, ly = cy+Math.sin(a)*dd;
-      if (lx*lx+ly*ly > (R-rr)*(R-rr)) continue;
-      if (nearBuilding(lx,ly,rr) || onPath(lx,ly,rr)) continue;
-      body.circles.push({ x:lx, y:ly, r:rr });
-      body.maxR = Math.max(body.maxR, Math.hypot(lx-cx, ly-cy) + rr);
-    }
-    lakes.push(body);
-    for (const c of body.circles) out.push({ type:'lake', x:c.x, y:c.y, r:c.r });
-  }
-  // true if (x,y) sits over open water — keeps tree CENTRES off the lake so the
-  // water stays visible, while edge trees still overhang it (their canopy
-  // radius reaches in, and trees draw on top of water → blossoms over the pond).
-  const inWater = (x,y)=>{
-    for (const l of lakes){
-      if (Math.hypot(l.cx-x, l.cy-y) > l.maxR) continue;
-      for (const c of l.circles){ if (Math.hypot(c.x-x, c.y-y) < c.r) return true; }
-    }
-    return false;
-  };
-
-  // ---- PASS 2: cherry trees fill the rest of the forest, overhanging water.
-  for (let gy=-R; gy<=R; gy+=STEP){
-    for (let gx=-R; gx<=R; gx+=STEP){
-      const x = gx + rand(-14,14), y = gy + rand(-14,14);
-      if (x*x + y*y > R*R) continue;
-      const r = rand(MAZE.RMIN, MAZE.RMAX);
-      if (nearBuilding(x,y,r)) continue;
-      if (onPath(x,y,r)) continue;
-      if (inWater(x,y)) continue;            // leave open water; shoreline trees overhang it
-      out.push({ type: 'thicket', x, y, r });
-    }
-  }
-  return out;
-}
-
-// ~1500 wall circles is too many for the old brute-force collision scan, so
-// they're indexed into a coarse spatial hash once per run.
-const OBGRID_CELL = 320;
-function buildObstacleGrid(obs){
-  const m = new Map();
-  for (const o of obs){
-    const x0 = Math.floor((o.x-o.r)/OBGRID_CELL), x1 = Math.floor((o.x+o.r)/OBGRID_CELL);
-    const y0 = Math.floor((o.y-o.r)/OBGRID_CELL), y1 = Math.floor((o.y+o.r)/OBGRID_CELL);
-    for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
-      const k = cx + ',' + cy;
-      let cell = m.get(k);
-      if (!cell) m.set(k, cell = []);
-      cell.push(o);
-    }
-  }
-  return m;
-}
-function forEachObstacleNear(x, y, r, fn){
-  if (!game || !game.obGrid) return;
-  const x0 = Math.floor((x-r)/OBGRID_CELL), x1 = Math.floor((x+r)/OBGRID_CELL);
-  const y0 = Math.floor((y-r)/OBGRID_CELL), y1 = Math.floor((y+r)/OBGRID_CELL);
-  for (let cy=y0; cy<=y1; cy++) for (let cx=x0; cx<=x1; cx++){
-    const cell = game.obGrid.get(cx + ',' + cy);
-    if (cell) for (const o of cell) fn(o);
-  }
-}
-function isWalkable(x, y, r){
-  let ok = true;
-  forEachObstacleNear(x, y, r, o => {
-    const dx = x-o.x, dy = y-o.y, min = o.r + r;
-    if (dx*dx + dy*dy < min*min) ok = false;
-  });
-  return ok;
-}
-
-// Push a movable entity (player or enemy) out of any wall circle it has
-// overlapped. Spatial hash keeps this a handful of tests per entity.
-function pushOutOfObstacles(e){
-  forEachObstacleNear(e.x, e.y, e.r, o => {
-    const dx = e.x - o.x, dy = e.y - o.y, d2 = dx*dx + dy*dy;
-    const min = o.r + e.r;
-    if (d2 > 0.0001 && d2 < min*min){
-      const d = Math.sqrt(d2);
-      e.x = o.x + dx/d * min;
-      e.y = o.y + dy/d * min;
-    }
-  });
-}
+const CUSTOM_MAP = (typeof location !== 'undefined' &&
+  new URLSearchParams(location.search).get('map') === 'custom') ? loadCustomGridMap() : null;
 function makeBuilding(type, x, y){
   const cfg = BUILDING_TYPES[type];
   const b = {
@@ -1266,36 +1000,24 @@ function newGame(){
   game.bossKills = 0;
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
-  // generate the world (custom layout if one was loaded, else the procedural
-  // spiral); on the rare roll where corridor jitter breaches a gate seal,
-  // throw the whole world away and roll again — winding is random either way
-  for (let attempt=0; attempt<6; attempt++){
-    game.buildings = CUSTOM_MAP ? buildingsFromSpec(CUSTOM_MAP) : generateBuildings();
-    game.paths     = generatePaths(game.buildings);   // roads + marcher routes
-    game.obstacles = generateObstacles(game.buildings, game.paths);
-    game.obstacles.push(...generateGates(game.buildings));
-    const sound = CUSTOM_MAP ? customWorldIsSound(game.buildings, game.obstacles)
-                             : worldIsSound(game.buildings, game.obstacles);
-    if (sound) break;
-  }
-  game.obGrid    = buildObstacleGrid(game.obstacles);
-  game.campfires = [];   // campfires only appear where bandit camps fall
-  game.archers = [];
-  // spawn the samurai right on the Dojo door; four friendly archers stand guard
+  // load the world: custom grid map if one was authored, else the built-in
+  // default. Buildings / nests / camps / campfires all come from the map spec.
+  const world = loadGridMap(CUSTOM_MAP || buildDefaultMap());
+  game.grid      = world.grid;
+  game.buildings = world.buildings;
+  game.nests     = world.nests;
+  game.mobs      = world.mobs;
+  game.campfires = world.campfires;
+  game.archers   = [];
+  // drop the samurai on the authored spawn; the Dojo's four archers stand guard
+  player.x = world.spawn.x; player.y = world.spawn.y;
+  game.cam.x = player.x; game.cam.y = player.y;
+  game.checkpoint = { x: world.spawn.x, y: world.spawn.y, label: 'The Dojo' };
   const dojoB = game.buildings.find(b => b.type === 'dojo');
-  if (dojoB){
-    player.x = dojoB.x; player.y = dojoB.y;
-    game.cam.x = dojoB.x; game.cam.y = dojoB.y;
-    game.checkpoint = { x: dojoB.x, y: dojoB.y, label: 'The Dojo' };
-    game.archers = makeDojoArchers(dojoB.x, dojoB.y);
-  }
+  if (dojoB) game.archers = makeDojoArchers(dojoB.x, dojoB.y);
   const VW = W/viewScale, VH = H/viewScale;
   for (let i=0;i<26;i++) petals.push({ x:player.x+rand(-VW,VW), y:player.y+rand(-VH,VH), s:rand(.5,1.4), vx:rand(-12,-30), vy:rand(20,46), rot:rand(0,TAU), vr:rand(-2,2) });
   rebuildOrbit();
-  // summoner nests are strung along the roads — dormant until you draw near
-  game.nests = generateNests(game.buildings, game.paths);
-  // camps & patrols — finite packs that don't respawn unless you rest
-  game.mobs = generateMobCamps(game.buildings, game.paths, game.nests);
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1552,46 +1274,13 @@ function hitPlayer(dmg){
 // =====================================================================
 let _nid = 1;
 const NEST = {
-  along: 600,      // spacing between nests along a road
-  // keep summoners (one kind of boss) clear of building/zone bosses (the other
-  // kind). Zone bosses are also spaced further apart in generateBuildings so
-  // two different boss kinds never wake on top of each other.
-  clearB: 330,
-  clearDojo: 400,  // safe radius around the Dojo
   aggro: 320,      // engage distance
   leash: 760,      // flee past this and the summoner sleeps again
   addCap: 14,      // max live adds per summoner at once
   addCd: 0.7,      // seconds between summon pulses
   addBurst: 2,     // adds conjured per pulse → fills to a real swarm fast
 };
-// place dormant nests at intervals along the forward roads (not return roads)
-function generateNests(buildings, paths){
-  const nests = [], dojo = buildings[0];
-  const ok = (x,y)=>{
-    if (Math.hypot(x-dojo.x, y-dojo.y) < NEST.clearDojo) return false;
-    for (const b of buildings) if (Math.hypot(x-b.x, y-b.y) < NEST.clearB) return false;
-    for (const n of nests) if (Math.hypot(x-n.x, y-n.y) < NEST.along*0.7) return false;
-    return isWalkable(x, y, 26);
-  };
-  for (const e of paths.edges){
-    if (e.isReturn) continue;
-    const pts = e.pts;
-    let dun = NEST.along * 0.5;             // distance until the next drop
-    for (let k=1;k<pts.length;k++){
-      let ax=pts[k-1].x, ay=pts[k-1].y;
-      const bx=pts[k].x, by=pts[k].y;
-      let seg = Math.hypot(bx-ax, by-ay) || 1;
-      const dirx=(bx-ax)/seg, diry=(by-ay)/seg;
-      while (dun <= seg){
-        ax += dirx*dun; ay += diry*dun; seg -= dun;
-        if (ok(ax,ay)) nests.push({ x:ax, y:ay, depth:e.of.depth||1, state:'dormant', summoner:null, _id:_nid++ });
-        dun = NEST.along;
-      }
-      dun -= seg;
-    }
-  }
-  return nests;
-}
+// Nests are authored in the map spec now; loadGridMap instantiates them.
 function activateNest(n){
   n.state = 'active';
   const d = n.depth;
@@ -1663,11 +1352,6 @@ function resetNests(){
 // =====================================================================
 let _mid = 1;
 const MOB = {
-  along: 200,      // spacing of camp/patrol drops along the roads (dense → lots)
-  offset: 60,      // how far off-center a camp sits (stays within the corridor)
-  clearB: 320,     // keep clear of building boss arenas
-  clearDojo: 470,  // safe radius around the Dojo (the opening stays calm)
-  spacing: 120,    // min distance between two groups
   trigger: 300,    // approach distance that wakes a group
   leash: 860,      // flee past this and survivors despawn (kills persist)
   campMin: 3, campMax: 6,
@@ -1683,49 +1367,11 @@ function mobRoster(d){
   if (d>=5) r.push('ronin','ninja');
   return r;
 }
+// Camps/patrols are authored in the map spec; loadGridMap calls this per entity.
 function makeMobGroup(x, y, kind, depth){
   const total = kind==='camp' ? irand(MOB.campMin, MOB.campMax)
                               : irand(MOB.patrolMin, MOB.patrolMax);
   return { _id:_mid++, x, y, kind, depth, total, killed:0, state:'idle' };
-}
-// strew camps (off-road clusters) and patrols (on-road packs) along every
-// forward road, alternating, depth-scaled. Lots of them — the roads are busy.
-function generateMobCamps(buildings, paths, nests){
-  const mobs = [], dojo = buildings[0];
-  const ok = (x,y)=>{
-    if (Math.hypot(x-dojo.x, y-dojo.y) < MOB.clearDojo) return false;
-    for (const b of buildings) if (Math.hypot(x-b.x, y-b.y) < MOB.clearB) return false;
-    for (const m of mobs) if (Math.hypot(x-m.x, y-m.y) < MOB.spacing) return false;
-    return isWalkable(x, y, 24);
-  };
-  let toggle = 0;
-  for (const e of paths.edges){
-    if (e.isReturn) continue;
-    const pts = e.pts, depth = e.of.depth || 1;
-    let dun = MOB.along * 0.4;
-    for (let k=1; k<pts.length; k++){
-      let ax=pts[k-1].x, ay=pts[k-1].y;
-      const bx=pts[k].x, by=pts[k].y;
-      let seg = Math.hypot(bx-ax, by-ay) || 1;
-      const dirx=(bx-ax)/seg, diry=(by-ay)/seg, nx=-diry, ny=dirx;  // unit road + normal
-      while (dun <= seg){
-        ax += dirx*dun; ay += diry*dun; seg -= dun;
-        const kind = (toggle++ % 2) ? 'patrol' : 'camp';
-        // camps sit at a road shoulder (falling back to the centre if the
-        // shoulder is forest); patrols sit on the road itself.
-        let x = ax, y = ay;
-        if (kind === 'camp'){
-          const side = Math.random()<0.5 ? -1 : 1;
-          const sx = ax + nx*MOB.offset*side, sy = ay + ny*MOB.offset*side;
-          if (ok(sx, sy)){ x = sx; y = sy; }
-        }
-        if (ok(x, y)) mobs.push(makeMobGroup(x, y, kind, depth));
-        dun = MOB.along;
-      }
-      dun -= seg;
-    }
-  }
-  return mobs;
 }
 // spawn the remaining members of a group (total − already-killed)
 function spawnMobGroup(c){
@@ -2242,9 +1888,8 @@ function update(dt){
     P.y = clamp(P.y, -hh, hh);
     game.cam.x = 0; game.cam.y = 0;       // fixed camera
   } else {
-    pushOutOfObstacles(P);                // the forest walls shove you out
-    const pd = Math.hypot(P.x, P.y);      // hard world edge beyond the forest
-    if (pd > MAZE.R){ P.x *= MAZE.R/pd; P.y *= MAZE.R/pd; }
+    pushOutOfObstacles(P);                // solid tiles shove you out
+    worldClamp(P);                        // keep inside the grid bounds
     game.cam.x += (P.x - game.cam.x) * Math.min(1, dt*8);
     game.cam.y += (P.y - game.cam.y) * Math.min(1, dt*8);
   }
@@ -3046,15 +2691,7 @@ function draw(){
     if (game.archers) for (const a of game.archers) drawArcher(a);
   }
   else {
-    drawGround(camX, camY, VW, VH);
-    drawPaths();   // faint dirt tint along the carved corridors
-    // obstacles + campfires draw under buildings (they're ambient terrain).
-    // ~1500 forest circles exist — only draw the on-screen ones.
-    if (game.obstacles) for (const o of game.obstacles){
-      if (o.x + o.r < camX || o.x - o.r > camX + VW ||
-          o.y + o.r < camY || o.y - o.r > camY + VH) continue;
-      drawObstacle(o);
-    }
+    drawTiles(camX, camY, VW, VH);   // floor / forest / water / gate terrain
     if (game.campfires) for (const c of game.campfires) drawCampfire(c);
     if (game.buildings) for (const b of game.buildings) drawBuilding(b);
     if (game.archers) for (const a of game.archers) drawArcher(a);
@@ -3149,34 +2786,50 @@ function drawReticle(){
   ctx.restore();
 }
 
-function drawGround(camX, camY, VW, VH){
-  const g = 64;
-  ctx.strokeStyle = 'rgba(255,255,255,0.025)'; ctx.lineWidth = 1/viewScale;
-  const x0 = Math.floor(camX/g)*g, y0 = Math.floor(camY/g)*g;
-  ctx.beginPath();
-  for (let x=x0; x<camX+VW+g; x+=g){ ctx.moveTo(x,camY); ctx.lineTo(x,camY+VH); }
-  for (let y=y0; y<camY+VH+g; y+=g){ ctx.moveTo(camX,y); ctx.lineTo(camX+VW,y); }
-  ctx.stroke();
-  // faint red sun vignette toward center
+// Render the visible slice of the tile grid. Each terrain type draws from a
+// tileset sprite (assets/sprites/tile-*.png) if present, else procedural art.
+function drawTiles(camX, camY, VW, VH){
+  const g = game.grid; if (!g) return;
+  const t = g.tile;
+  const c0=Math.max(0,Math.floor(camX/t)), c1=Math.min(g.cols-1,Math.floor((camX+VW)/t));
+  const r0=Math.max(0,Math.floor(camY/t)), r1=Math.min(g.rows-1,Math.floor((camY+VH)/t));
+  for (let row=r0; row<=r1; row++) for (let col=c0; col<=c1; col++)
+    drawTile(g.cells[row*g.cols+col], col*t, row*t, t, col, row);
+  // faint red-sun vignette over it all
   const cx=game.cam.x, cy=game.cam.y;
   const grd = ctx.createRadialGradient(cx,cy,40, cx,cy, Math.max(VW,VH)*0.7);
   grd.addColorStop(0,'rgba(216,54,43,0.05)'); grd.addColorStop(1,'rgba(0,0,0,0)');
   ctx.fillStyle = grd; ctx.fillRect(camX,camY,VW,VH);
 }
-
-function drawPaths(){
-  if (!game.paths) return;
-  ctx.save();
-  ctx.strokeStyle = 'rgba(150,115,70,0.07)';
-  ctx.lineWidth = MAZE.HW * 2;
-  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  ctx.beginPath();
-  for (const e of game.paths.edges){
-    ctx.moveTo(e.pts[0].x, e.pts[0].y);
-    for (let k=1; k<e.pts.length; k++) ctx.lineTo(e.pts[k].x, e.pts[k].y);
+function drawTile(v, x, y, t, col, row){
+  const spr = v===T_FOREST?SPR.tileForest : v===T_WATER?SPR.tileWater
+            : v===T_GATE?SPR.tileGate : SPR.tileFloor;
+  if (spr && spr._ready){ ctx.drawImage(spr, x, y, t, t); return; }
+  if (v===T_FLOOR){
+    ctx.fillStyle = ((col+row)&1) ? '#181b23' : '#1b1e28';
+    ctx.fillRect(x,y,t,t);
+  } else if (v===T_FOREST){
+    ctx.fillStyle = '#0f120e'; ctx.fillRect(x,y,t,t);
+    const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
+    ctx.fillStyle = '#28321f';
+    ctx.beginPath(); ctx.arc(x+t/2, y+t/2, t*0.44, 0, TAU); ctx.fill();
+    ctx.fillStyle = ['#d98aa8','#c97a98','#e0a0b8'][(f*3)|0];
+    ctx.beginPath(); ctx.arc(x+t*0.38+f*10, y+t*0.4, t*0.14, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(x+t*0.62, y+t*0.6-f*6, t*0.11, 0, TAU); ctx.fill();
+  } else if (v===T_WATER){
+    ctx.fillStyle = '#1d3b53'; ctx.fillRect(x,y,t,t);
+    ctx.strokeStyle = 'rgba(120,180,210,0.22)'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(x+6, y+t*0.42); ctx.quadraticCurveTo(x+t*0.5, y+t*0.42-6, x+t-6, y+t*0.42);
+    ctx.moveTo(x+6, y+t*0.7);  ctx.quadraticCurveTo(x+t*0.5, y+t*0.7-6,  x+t-6, y+t*0.7);
+    ctx.stroke();
+  } else if (v===T_GATE){
+    ctx.fillStyle = '#1a140e'; ctx.fillRect(x,y,t,t);
+    ctx.strokeStyle = '#8a5a2e'; ctx.lineWidth = 6; ctx.strokeRect(x+4,y+4,t-8,t-8);
+    ctx.strokeStyle = '#6a4a26'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(x+6,y+6); ctx.lineTo(x+t-6,y+t-6);
+    ctx.moveTo(x+t-6,y+6); ctx.lineTo(x+6,y+t-6); ctx.stroke();
   }
-  ctx.stroke();
-  ctx.restore();
 }
 
 function drawDojoRoom(){
@@ -3233,60 +2886,6 @@ function drawStation(s){
   ctx.fillText(s.name, 0, s.r + 22);
   ctx.restore();
 }
-function drawObstacle(o){
-  ctx.save(); ctx.translate(o.x, o.y);
-  if (o.type === 'lake'){
-    // base water
-    ctx.fillStyle = '#16273e';
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
-    // inner gradient hint of depth
-    const g = ctx.createRadialGradient(0, 0, 4, 0, 0, o.r);
-    g.addColorStop(0, 'rgba(60,90,140,0.45)');
-    g.addColorStop(1, 'rgba(22,39,62,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
-    // a couple of ripples
-    ctx.strokeStyle = 'rgba(150,180,220,0.22)'; ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.arc(0, 0, o.r*0.55, 0, TAU); ctx.stroke();
-    ctx.beginPath(); ctx.arc(-o.r*0.2, o.r*0.1, o.r*0.28, 0, TAU); ctx.stroke();
-    // shoreline
-    ctx.strokeStyle = 'rgba(80,60,40,0.55)'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
-  } else if (o.type === 'gate'){
-    // boss barricade — crossed planks over a dark stump; falls when the
-    // zone's boss building is cleared
-    ctx.fillStyle = '#2a1d10';
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#5a4520'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(0, 0, o.r*0.92, 0, TAU); ctx.stroke();
-    ctx.strokeStyle = '#7a5b2a'; ctx.lineWidth = 7; ctx.lineCap = 'round';
-    ctx.beginPath();
-    ctx.moveTo(-o.r*0.55, -o.r*0.55); ctx.lineTo(o.r*0.55,  o.r*0.55);
-    ctx.moveTo(-o.r*0.55,  o.r*0.55); ctx.lineTo(o.r*0.55, -o.r*0.55);
-    ctx.stroke();
-    ctx.lineCap = 'butt';
-  } else {
-    // cherry blossom — layered pink blooms over a shaded mauve under-canopy
-    ctx.fillStyle = '#3b2233';
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.fill();
-    ctx.strokeStyle = 'rgba(90,45,70,0.55)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.arc(0, 0, o.r, 0, TAU); ctx.stroke();
-    // blossom clusters around the canopy (deterministic per tree → no shimmer)
-    const clusters = 5 + ((o.r/34)|0);
-    const seed = o.x * 0.013 + o.y * 0.017;
-    for (let i=0; i<clusters; i++){
-      const a = (i / clusters) * TAU + seed;
-      const rr = o.r * 0.62;
-      ctx.fillStyle = (i & 1) ? 'rgba(247,168,196,0.92)' : 'rgba(233,140,180,0.92)';
-      ctx.beginPath(); ctx.arc(Math.cos(a)*rr, Math.sin(a)*rr, o.r*0.34, 0, TAU); ctx.fill();
-    }
-    // bright central bloom
-    ctx.fillStyle = 'rgba(255,201,221,0.95)';
-    ctx.beginPath(); ctx.arc(0, 0, o.r*0.5, 0, TAU); ctx.fill();
-  }
-  ctx.restore();
-}
-
 function drawCampfire(c){
   ctx.save(); ctx.translate(c.x, c.y);
   const t = (game ? game.t : 0);
@@ -4961,13 +4560,15 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
   window.__art = {
     ctx, cv, TAU, RONIN_SPRITE,
     drawBuilding, drawCampfire, drawEnemy, drawDummy, drawOrb, drawPlayer,
-    drawArcher, drawStation, drawObstacle, drawShot, drawSpiritBlade, drawArc,
+    drawArcher, drawStation, drawTiles, drawShot, drawSpiritBlade, drawArc,
     newGame, startDojo, openBuildingDraft, BUILDING_BOONS, DOJO_STATIONS,
     resetNests, NEST, get nests(){ return game && game.nests; },
     // --- headless-sim hooks (smoke test in test/smoke.js drives these) ---
     update, draw, STATE, WEAPONS, PASSIVES, ENEMY_TYPES,
     buildOptions, applyOption, gainXP, damage,
     resolveDive, startDeflect, spawnMobGroup, despawnMob, MOB,
+    openGates, isWalkable, TILE, T_FLOOR, T_FOREST, T_WATER, T_GATE,
+    buildDefaultMap, loadGridMap,
     get orbs(){ return orbs; }, get blades(){ return blades; },
     get petals(){ return petals; }, get mobs(){ return game && game.mobs; },
     get game(){return game}, set game(v){game=v},

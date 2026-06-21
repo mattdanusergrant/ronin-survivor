@@ -7,7 +7,7 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 ## Repo contents
 
 - `index.html` — the game. Single self-contained file (vanilla JS/Canvas, no build step, no dependencies).
-- `mapbuilder.html` — standalone visual map editor: place/chain/drag buildings, validate gate seals against the real generator, export/import JSON, one-click playtest. Play a custom layout via `index.html?map=custom`.
+- `mapbuilder.html` — standalone **grid map painter**: paint terrain (floor/forest/water) and drop entities (Dojo, zone buildings, summoner nests, camps/patrols, gates, campfires, player spawn), export/import JSON, one-click playtest. Play a custom layout via `index.html?map=custom`.
 - `assets/sprites/` — pixel-art sprites + a drop-in pipeline: drop a correctly-named PNG and it appears in-game on next load, falling back to procedural art until it's there. See `assets/sprites/README.md` for the naming/size convention.
 - `design-docs/GDD.md` — design doc (pillars, core loop, prototype scope, balance knobs, open questions).
 - `CLAUDE.md` — dev guide / handoff notes: how to run & verify, a code map of `index.html`, and gotchas for the next dev.
@@ -39,7 +39,7 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 - Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives
 - All projectiles (yours and theirs) and all enemy charge-up tells move at a **deliberate half-speed** — combat reads as dodge/parry timing, not bullet-dodging reflexes
 - Level-up boon draft (3-of-N, pauses time)
-- A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; razed camps leave campfire checkpoints. Zone bosses are spaced well apart so two different boss kinds never wake together
+- A **gated tile-grid world** (square tiles: floor / forest / water / gate): a built-in authored map of zones, each sealed by a gate that opens when you clear its boss; razed camps leave campfire checkpoints. Make your own in `mapbuilder.html`
 - **Summoner nests** along the roads (the endless-horde source): walk near a dormant nest to wake its summoner and its spectral horde; kill the summoner to dissolve the horde; flee the leash to put it back to sleep; resting/dying resets them
 - **Camps & patrols** along the roads (the *finite* enemy source): packs of ordinary foes that wake on approach. Unlike nests they **don't respawn** — clear one and it stays cleared; flee mid-fight and survivors despawn but your kills stick. Only **resting at a campfire (or dying) re-arms them**
 - Clearing a special building grants a **run-scoped boon draft** (Shrine = Blessing, Cache = Arsenal, the three altars = build-defining pure-upside boons)

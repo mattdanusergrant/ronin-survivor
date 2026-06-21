@@ -65,11 +65,11 @@ Search for these landmarks (line numbers drift; the names are stable):
 | Enemies | `ENEMY_TYPES`; enemy AI lives in `update()` (states: `wander`→`alert`→`chase`) |
 | Summoner nests (endless horde source) | `NEST`, `generateNests`, `activateNest`/`deactivateNest`, `summonAdd`, `dissolveHorde`, `resetNests` |
 | Camps & patrols (finite source) | `MOB`, `generateMobCamps`, `spawnMobGroup`/`despawnMob`; `killEnemy` banks `mobId` kills; reset via `resetNests` |
-| World gen | `BUILDING_TYPES`, `generateBuildings`, `generatePaths`, obstacles via `buildObstacleGrid` / `isWalkable` |
+| Grid world | `TILE`/`T_FLOOR…T_GATE`, `buildDefaultMap` (built-in authored map), `loadGridMap` (spec → world), tile collision `isWalkable`/`pushOutOfObstacles`/`worldClamp`, `openGates`; `BUILDING_TYPES`, `makeBuilding`, render via `drawTiles`/`drawTile` |
 | Special-building boons | `BUILDING_BOONS`, `openBuildingDraft` |
 | Dojo hub | `DOJO`, `DOJO_STATIONS`, `DOJO_DUMMIES`, `startDojo`, `updateDojoStations`; archers: `ARCHER`, `makeDojoArchers`, `updateArcher` |
 | Run snapshot (dojo mid-run) | `snapshotRun` / `restoreRun` / `enterDojoFromRun` |
-| Custom maps | `?map=custom` → `loadCustomMapSpec` (`CUSTOM_MAP_KEY` in `localStorage`) |
+| Custom maps | `?map=custom` → `loadCustomGridMap` (v2 grid spec in `CUSTOM_MAP_KEY`); authored in `mapbuilder.html` |
 | Rendering | `draw()` + the `draw*` family (`drawEnemy`, `drawBuilding`, `drawPlayer`, …) |
 | Mini-games (Options easter egg) | `updateVolley`/`drawVolley`, `updateSoccer`/`drawSoccer` |
 | Dev hatch | `?expose=1` → `window.__art` (end of script) |
@@ -93,9 +93,18 @@ Search for these landmarks (line numbers drift; the names are stable):
 - **`timeMul()` = `1 + t/75`** is a mild global HP scale. It applies to **zone
   bosses** (plus a per-depth multiplier), *not* to nest adds (those scale by
   nest `depth`).
-- **Zone gating:** `BUILDING_TYPES` defines each zone boss; clearing a special
-  building grants a **run-scoped boon draft** (`BUILDING_BOONS`) and opens the
-  gate onward. The only **permanent** Ryo sink is the Dojo's Ryo Trader.
+- **The world is a square tile grid.** `TILE`=64px; terrain ids floor/forest/
+  water/gate live in `game.grid.cells`. Movement collides with solid tiles
+  (`isWalkable`/`pushOutOfObstacles`/`worldClamp`); **projectiles ignore tiles**
+  (they fly over, dying only at `MAX_PROJ_RANGE`). The default world is a single
+  built-in authored map (`buildDefaultMap`); `loadGridMap(spec)` turns a v2 spec
+  (default *or* `?map=custom`) into `game.grid` + buildings/nests/mobs/campfires.
+  There is **no procedural generation** anymore.
+- **Zone gating:** `BUILDING_TYPES` defines each zone boss. Gates are terrain
+  cells (`T_GATE`) linked to an owner building's `gateCells`; clearing that boss
+  → `openGates(b)` carves them back to floor. Clearing a special building also
+  grants a **run-scoped boon draft** (`BUILDING_BOONS`). The only **permanent**
+  Ryo sink is the Dojo's Ryo Trader.
 - **Dojo visits mid-run** snapshot/restore the entire run state
   (`snapshotRun`/`restoreRun`) — if you add new run-global state, remember to
   include it in the snapshot or it will reset on a Dojo visit.
@@ -104,10 +113,15 @@ Search for these landmarks (line numbers drift; the names are stable):
 
 - **One file, no modules.** Order matters: it's plain top-level `const`/
   `function` declarations in one script. Keep new helpers near their system.
-- **Procedural-art fallback.** Entities draw from `assets/sprites/*.png` when the
-  file exists, else a Canvas placeholder — so partial art never breaks the build.
-  See `assets/sprites/README.md` for the naming/size convention. Sprites must be
-  committed to ship (Pages serves them).
+- **Procedural-art fallback.** Entities (and terrain tiles) draw from
+  `assets/sprites/*.png` when the file exists, else a Canvas placeholder — so
+  partial art never breaks the build. The grid tileset slots are `tile-floor`/
+  `tile-forest`/`tile-water`/`tile-gate` (64×64). See `assets/sprites/README.md`.
+  Sprites must be committed to ship (Pages serves them).
+- **Map editor is a grid painter.** `mapbuilder.html` paints terrain + drops
+  entities and exports the same **v2 grid spec** the game loads. Both halves
+  share the `{version:2,cols,rows,tile,terrain:[…],entities:[…]}` shape — if you
+  change the spec, change both. Gates auto-link to the nearest building on export.
 - **Two upgrade modes.** `SETTINGS.upgradeMode` switches between the `classic`
   weapon/passive draft and a `minimal` stat-focused pool — touch both
   `buildOptions` *and* `buildMinimalOptions` when changing the level-up UI.
@@ -119,6 +133,11 @@ Search for these landmarks (line numbers drift; the names are stable):
   the upgradeable-turret economy (replaced by the Dojo guardian archers). The
   retired spawner functions and the dead `'march'` enemy-AI branch were swept on
   2026-06-19 — see `design-docs/TODO.md`.
+- **The whole continuous-coordinate world is gone** (replaced by the tile grid):
+  `generateBuildings`/`generatePaths`/`windPath`/`generateObstacles`/forest
+  circles/`buildObstacleGrid`/`MAZE`, the `worldIsSound`/`makeFlood` gate-seal
+  flood-fill, the auto-scatter `generateNests`/`generateMobCamps`, and the
+  node-graph map editor. Nests/camps/buildings are authored in the map spec now.
 
 ## Where to look next
 

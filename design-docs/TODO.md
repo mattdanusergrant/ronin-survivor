@@ -74,4 +74,29 @@ test (`npm test`) that loads the inline script behind a DOM/Canvas stub via
 level-up draft, the Dojo, nest reset, every building boon). CI runs it on every
 push/PR (`.github/workflows/test.yml`).
 
+---
+
+## 4. Square-grid map rework — ✅ DONE (2026-06-21)
+
+Replaced the continuous-coordinate world (forest circles + winding roads +
+flood-fill gate-seal checks + node-graph editor) with a **square tile grid**:
+- `TILE`=64px grid; terrain ids floor/forest/water/gate in `game.grid.cells`.
+  Movement collides with solid tiles; projectiles still fly over.
+- `buildDefaultMap()` is the single built-in authored world (deterministic
+  gated chain); `loadGridMap(spec)` turns a **v2 grid spec** (default or
+  `?map=custom`) into the live world. Cut: `generateBuildings`/`generatePaths`/
+  `windPath`/`generateObstacles`/`MAZE`/`buildObstacleGrid`/`worldIsSound`/
+  `makeFlood`/`generateNests`/`generateMobCamps`.
+- `mapbuilder.html` is now a **grid painter** (paint terrain, drop entities,
+  gates auto-link to the nearest building on export). Same v2 spec both ends.
+- Terrain tileset slots added (`tile-floor/forest/water/gate.png`, 64×64) with
+  procedural fallback in `drawTile`.
+- Smoke test extended: grid collision, the gating chain (deeper zones sealed
+  until their boss falls), and a v2 custom-spec loader round-trip. 16/16.
+
+**Follow-up (not blocking):**
+- Draw the actual tileset art (currently procedural fallback only).
+- Editor niceties: rectangle/fill tools, explicit gate→building linking,
+  per-entity depth, undo. Branch/loop layouts are already possible (free paint).
+
 #LLM-generated

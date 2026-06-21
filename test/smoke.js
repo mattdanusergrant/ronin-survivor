@@ -371,6 +371,92 @@ test('camps & patrols: generated, finite, cleared persists, rest re-arms', () =>
   assert(c.state === 'idle' && c.killed === 0, 'rest/death did not re-arm the camp');
 });
 
+// Flood walkable cells (0 = floor) from a start cell; returns the seen mask.
+function floodGrid(grid) {
+  const { cols, rows, cells } = grid;
+  return (sc, sr) => {
+    const seen = new Uint8Array(cols * rows);
+    const stack = [sr * cols + sc];
+    seen[stack[0]] = 1;
+    while (stack.length) {
+      const i = stack.pop(), c = i % cols, r = (i / cols) | 0;
+      const nbrs = [[c+1,r],[c-1,r],[c,r+1],[c,r-1]];
+      for (const [nc, nr] of nbrs) {
+        if (nc<0||nr<0||nc>=cols||nr>=rows) continue;
+        const j = nr*cols+nc;
+        if (seen[j] || cells[j] !== 0) continue;   // 0 = floor
+        seen[j] = 1; stack.push(j);
+      }
+    }
+    return seen;
+  };
+}
+function cellOf(art, b) { const t = art.TILE; return { c: Math.floor(b.x/t), r: Math.floor(b.y/t) }; }
+function reaches(seen, grid, b, art) {
+  const { c, r } = cellOf(art, b);
+  for (let dr=-1; dr<=1; dr++) for (let dc=-1; dc<=1; dc++) {
+    const nc=c+dc, nr=r+dr;
+    if (nc>=0&&nr>=0&&nc<grid.cols&&nr<grid.rows && seen[nr*grid.cols+nc]) return true;
+  }
+  return false;
+}
+
+test('grid world: terrain grid loads and collision blocks solid tiles', () => {
+  art.newGame();
+  const g = art.game.grid;
+  assert(g && g.cells.length === g.cols * g.rows, 'grid not loaded / wrong size');
+  assert(g.cells.some(v => v === art.T_FLOOR) && g.cells.some(v => v === art.T_FOREST),
+    'expected both floor and forest tiles');
+  // a forest cell center should not be walkable; the spawn cell should be
+  const fi = g.cells.indexOf(art.T_FOREST);
+  const fc = fi % g.cols, fr = (fi / g.cols) | 0, t = art.TILE;
+  assert(!art.isWalkable((fc+0.5)*t, (fr+0.5)*t, 14), 'forest tile reported walkable');
+  assert(art.isWalkable(art.player.x, art.player.y, 14), 'player spawn is inside a wall');
+});
+
+test('gating: deeper zones are sealed until their gate-owner boss falls', () => {
+  art.newGame();
+  const g = art.game.grid;
+  const flood = floodGrid(g);
+  const spawnCell = { c: Math.floor(art.player.x/art.TILE), r: Math.floor(art.player.y/art.TILE) };
+  const bldgs = art.game.buildings.filter(b => b.type !== 'dojo');
+  // sort by depth: tutorial (depth 1) reachable from spawn; depth>=2 sealed
+  const tut  = bldgs.find(b => b.depth === 1);
+  const deep = bldgs.find(b => b.depth === 2);
+  assert(tut && deep, 'expected a depth-1 and depth-2 building');
+  let seen = flood(spawnCell.c, spawnCell.r);
+  assert(reaches(seen, g, tut, art), 'tutorial zone unreachable from spawn');
+  assert(!reaches(seen, g, deep, art), 'depth-2 zone reachable before its gate opens');
+  // clear the tutorial boss → its gates open → depth-2 becomes reachable
+  art.openGates(tut);
+  seen = flood(spawnCell.c, spawnCell.r);
+  assert(reaches(seen, g, deep, art), 'gate did not open the way to the next zone');
+});
+
+test('custom map loader: a hand-authored v2 spec loads into the world', () => {
+  art.newGame();   // need game.grid live for loadGridMap helpers
+  const cols = 8, rows = 8;
+  const terrain = new Array(cols*rows).fill(art.T_FOREST);
+  for (let r=1;r<=6;r++) for (let c=1;c<=6;c++) terrain[r*cols+c] = art.T_FLOOR; // open room
+  const spec = { version:2, name:'t', cols, rows, tile:64, terrain, entities:[
+    { kind:'dojo', col:2, row:2 },
+    { kind:'spawn', col:2, row:2 },
+    { kind:'building', type:'bandits', col:5, row:5, id:1, depth:1 },
+    { kind:'gate', col:4, row:4, owner:1 },
+    { kind:'nest', col:3, row:3, depth:1 },
+    { kind:'camp', col:4, row:5, depth:1 },
+    { kind:'campfire', col:2, row:3 },
+  ]};
+  const w = art.loadGridMap(spec);
+  assert(w.grid.cols === 8 && w.grid.cells.length === 64, 'grid dims wrong');
+  assert(w.grid.cells[4*8+4] === art.T_GATE, 'gate not stamped into terrain');
+  assert(w.buildings.length === 2, 'expected dojo + 1 building');   // dojo counts as a building
+  const camp = w.buildings.find(b => b.type === 'bandits');
+  assert(camp && camp.gateCells.length === 1, 'gate not linked to its owner building');
+  assert(w.nests.length === 1 && w.mobs.length === 1 && w.campfires.length === 1, 'spawn entities miscounted');
+  assert(w.spawn.x === 2.5*64 && w.spawn.y === 2.5*64, 'player spawn not at the authored cell center');
+});
+
 test('nest reset: resetNests puts every nest back to dormant and clears the horde', () => {
   art.newGame();
   // fake-activate a nest with a live summoned add
