@@ -59,9 +59,12 @@ Search for these landmarks (line numbers drift; the names are stable):
 | Settings (persisted) | `SETTINGS` / `SETTINGS_KEY` (`ronin-settings-v1`); `upgradeMode` = `classic`\|`minimal` |
 | Meta-progression (persisted) | `META` / `META_KEY` (`ronin-meta-v1`), `META_UPGRADES`, `applyMeta(p)` |
 | Weapons / passives | `WEAPONS`, `PASSIVES`, `MINIMAL_UPGRADES` (each entry has `apply`/`desc`) |
+| Player abilities | left-click `startRoll` (dodge, 10s cd), right-click `startDive`/`resolveDive` (bomb, 100s cd), space `startDeflect`/`deflectBolt` (parry); constants `ROLL_*`/`DIVE_*`/`DEFLECT_*` |
+| Projectile/tell pacing | `PROJ_SLOW` (0.5× shot speed, applied in `stepShot`), `TELL_MUL` (2× wind-up, applied in `startEnemyAttack`) |
 | Level-up draft | `buildOptions` / `buildMinimalOptions` → `openLevelUp` → `applyOption` |
 | Enemies | `ENEMY_TYPES`; enemy AI lives in `update()` (states: `wander`→`alert`→`chase`) |
-| Summoner nests (enemy source) | `NEST`, `generateNests`, `activateNest`/`deactivateNest`, `summonAdd`, `dissolveHorde`, `resetNests` |
+| Summoner nests (endless horde source) | `NEST`, `generateNests`, `activateNest`/`deactivateNest`, `summonAdd`, `dissolveHorde`, `resetNests` |
+| Camps & patrols (finite source) | `MOB`, `generateMobCamps`, `spawnMobGroup`/`despawnMob`; `killEnemy` banks `mobId` kills; reset via `resetNests` |
 | World gen | `BUILDING_TYPES`, `generateBuildings`, `generatePaths`, obstacles via `buildObstacleGrid` / `isWalkable` |
 | Special-building boons | `BUILDING_BOONS`, `openBuildingDraft` |
 | Dojo hub | `DOJO`, `DOJO_STATIONS`, `DOJO_DUMMIES`, `startDojo`, `updateDojoStations`; archers: `ARCHER`, `makeDojoArchers`, `updateArcher` |
@@ -80,6 +83,13 @@ Search for these landmarks (line numbers drift; the names are stable):
   `NEST.leash` → `deactivateNest` (back to dormant). **Resting at a campfire or
   dying calls `resetNests`**, so cleared ground is re-runnable. Tuning knobs all
   live in the `NEST` object.
+- **Two enemy sources, different rules.** Nests are the *endless* horde (re-arm
+  on leash). **Camps & patrols** (`MOB` / `generateMobCamps`) are the *finite*
+  packs: a fixed roster that wakes on approach and, crucially, **does not
+  respawn** — `killEnemy` banks each member's kill on its camp, leashing away
+  only despawns *survivors*, and a fully-cleared camp stays cleared. `resetNests`
+  (rest/death) is the **only** thing that re-arms them — so if you add another
+  "world reset" trigger, route it through `resetNests`.
 - **`timeMul()` = `1 + t/75`** is a mild global HP scale. It applies to **zone
   bosses** (plus a per-depth multiplier), *not* to nest adds (those scale by
   nest `depth`).

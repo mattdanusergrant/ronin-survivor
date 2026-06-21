@@ -10,7 +10,7 @@ A *Vampire Survivors*–style horde-survival auto-battler, themed as an homage t
 
 ## Pillars
 
-1. **Active swordsman, automatic swarm-clear.** You move, **aim + fire** a mouse-directed ki bolt, and **dodge-roll** through danger; your drafted weapons auto-fire on top. Decision-making lives in *positioning*, *aim/dodge timing*, and the *boon draft*. (Earlier builds were move-only; the combat layer was added deliberately, de-emphasising touch/mobile.)
+1. **Active swordsman, automatic swarm-clear.** You move; your drafted weapons auto-fire; and you steer the fight with three mouse/space abilities — a **left-click dodge roll** toward the cursor (10s cd), a **right-click diving bomb** AoE (100s cd), and a **spacebar Deflect Burst** that parries enemy projectiles back on their casters. Decision-making lives in *positioning*, *ability timing*, and the *boon draft*. (Earlier builds were move-only; the combat layer was added deliberately, de-emphasising touch/mobile.)
 2. **The swarm has a source.** A Souls/VS hybrid: the world is a quiet, explorable space dotted with **dormant summoners** along the roads. Wake one and it pumps out a VS-style spectral horde; cut through the adds, kill the summoner, and its whole horde vanishes. Clear an area and it's safe to navigate again. Difficulty is *place and depth* (which summoners you wake, how far out), not a global timer — and the world is clearable, resetting only when you **rest** at a campfire (or die).
 3. **Power fantasy by minute 5.** Start fragile with one blade; end the run a whirling storm of steel and spirit-fire. The curve from "barely surviving" to "screen-clearing" is the product.
 4. **Style is a feature.** Drawn-not-licensed art; high-contrast Afro-Samurai palette; satisfying hit-feedback (flash, knockback, sparks, screen-shake, damage numbers).
@@ -33,7 +33,7 @@ A run takes place in a gated world carved out of solid cherry-blossom forest (la
 
 Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait first. Built to this DoD — **all verified headlessly** (node syntax check + DOM-stubbed sim: spawn/kite/level-up/all-four-weapons/boss/render all pass):
 
-- **Control (desktop-first):** WASD/arrows to move; **mouse-aim + hold left-click** for an aimed ki bolt; **spacebar** to dodge-roll (i-frames + short cooldown) or to interact when standing on something usable (campfire/Dojo/Dojo station). Drafted weapons still auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
+- **Control (desktop-first):** WASD/arrows to move; **left-click** dodge-rolls toward the cursor (i-frames; 10s cd); **right-click** is a diving bomb leap+slam toward the cursor (big AoE; 100s cd); **spacebar** is a Deflect Burst parry (and interacts when standing on something usable: campfire/Dojo/Dojo station). Drafted weapons auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
 - **4 weapons**, each 6 levels:
   | Weapon | Behaviour |
   |---|---|
@@ -43,7 +43,7 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
   | **Spirit Blades** | Blades orbit you, damaging on contact (per-foe hit cooldown). Levels: +count, +dmg. |
 - **7 passives** (stackable, capped): Whetstone (+dmg), Iron Will (+max HP & heal), Swift Geta (+move), Quick Hands (−cooldowns), Soul Pull (+pickup range), Calm Breath (+regen), Ambition (+ki gain).
 - **Level-up draft:** time pauses, 3 random eligible options (new weapon / weapon level / passive), tap to pick. Fallback "Second Wind" full-heal if everything is maxed.
-- **Enemies:** footpad → ronin → ninja → brute, conjured as a horde by **summoner nests** (type pool & strength scale with nest depth). **Summoners** are rooted hooded conjurers with their own health bar; killing one dissolves its whole horde. Each **zone boss building** is a separate capstone fight that drops a boon and opens the gate onward.
+- **Enemies:** footpad → ronin → ninja → brute, from three sources. (1) **Summoner nests** conjure an endless horde (type pool & strength scale with nest depth); the rooted hooded **summoner** has its own health bar and killing it dissolves the whole horde. (2) **Camps & patrols** are *finite* packs strewn densely along the roads — they wake on approach and **don't respawn** (flee and survivors despawn, but kills stick; only resting at a campfire or dying re-arms them). (3) Each **zone boss building** is a capstone fight that drops a boon and opens the gate onward; bosses are spaced apart so two never wake together.
 - **Telegraphed attacks (dodge counterplay):** every type gets a signature tell that rewards the dodge-roll. *Footpad* lobs a single slow ki bolt; *ninja* throws a slow 3-bolt spread; *ronin* winds up a forward cleave (locked red ground circle ahead); *brute* slams a big circle locked onto your current spot. Telegraphs are red ground markers whose inner fill converges to mark the impact instant; projectiles are slow enough to sidestep. **Bosses cycle four abilities** — ground slam, radial bolt ring, lunging cleave, and an aimed 5-bolt fan — rooting briefly mid-windup so the tell reads. Leaving the circle (or rolling through with i-frames) avoids the hit entirely.
 - **Ki / XP:** orbs drop on kill, magnet-pull within pickup range, quadratic level curve.
 - **Juice:** hit-flash, knockback, damage numbers, death sparks, screen-shake, i-frames + hurt-flash, drifting petals, red-sun vignette, grid ground.
@@ -60,7 +60,8 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
 
 ## Progression & balance (current first pass)
 
-- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact; dodge-roll = 0.22s dash (i-frames), 0.7s cooldown.
+- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact. Abilities: dodge roll = 0.22s i-frame dash, **10s cd** (left-click); diving bomb = 0.45s leap, 150px AoE, **100s cd** (right-click); Deflect Burst = 0.18s parry window, 1.4s cd (spacebar).
+- **Projectiles & tells:** all shots (player and enemy) fly at a global **0.5× speed**; all enemy charge-up telegraphs take **2× as long**. Combat is paced for read-and-react, not twitch.
 - **Level curve:** `xpNext = round(50 + lvl²·11.5 + lvl·30)` — gentle early, steepening.
 - **Global HP scale (`timeMul`):** `×(1 + t/75)` — applies to zone bosses (not nest adds, which scale by depth).
 - **Summoner nests** (`NEST` in `index.html`): wake at 320px, leash at 760px; each summoner pulses `addBurst:2` adds every `addCd:0.7s`, capped at `addCap:14` live; spacing `along:600px`.

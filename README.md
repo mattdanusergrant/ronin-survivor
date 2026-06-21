@@ -22,10 +22,11 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 **Controls (desktop-first):**
 
 - **Move** — WASD / arrow keys
-- **Aim + fire** — point with the mouse, hold **left-click** to fire an aimed ki bolt at the cursor
-- **Right-click** — **dodge-roll** (a quick dash with brief invulnerability)
+- **Left-click** — **dodge roll** toward the cursor (a quick i-frame dash; **10s cooldown**)
+- **Right-click** — **diving bomb attack** toward the cursor: leap in and slam for big AoE (**100s cooldown**)
+- **Spacebar** — **Deflect Burst**: a brief parry window that knocks enemy projectiles back on their casters (good timing required). Also interacts when you're standing on something usable.
 - **Interact** — `E` / `Enter` / `Space` when standing on something usable (a campfire checkpoint, the Dojo, or a Dojo station)
-- Your drafted weapons still fire **automatically** on top of all this
+- Your drafted weapons fire **automatically** on top of all this
 - **Esc/P** — pause
 
 Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to draft it. Don't let enemies touch you. *(Touch fallback: drag anywhere to move — mobile is no longer the primary target.)*
@@ -34,11 +35,13 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 
 ## What's in the prototype
 
-- Desktop controls: WASD move, mouse-aimed left-click ki bolt, right-click dodge-roll, `E` / `Enter` / `Space` interact (touch drag-to-move kept as a fallback)
-- Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives, all firing on top of the manual aimed shot
+- Desktop controls: WASD move; **left-click dodge roll** (10s cd), **right-click diving bomb** (100s cd), **spacebar Deflect Burst** (parry); `E` / `Enter` / `Space` interact (touch drag-to-move kept as a fallback)
+- Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives
+- All projectiles (yours and theirs) and all enemy charge-up tells move at a **deliberate half-speed** — combat reads as dodge/parry timing, not bullet-dodging reflexes
 - Level-up boon draft (3-of-N, pauses time)
-- A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; razed camps leave campfire checkpoints
-- **Summoner nests** along the roads (the enemy source): walk near a dormant nest to wake its summoner and its spectral horde; kill the summoner to dissolve the horde; flee the leash to put it back to sleep; resting/dying resets them
+- A **gated world** carved from solid forest: a procedural spiral of zones around the Dojo, each sealed by a boss until you clear it; razed camps leave campfire checkpoints. Zone bosses are spaced well apart so two different boss kinds never wake together
+- **Summoner nests** along the roads (the endless-horde source): walk near a dormant nest to wake its summoner and its spectral horde; kill the summoner to dissolve the horde; flee the leash to put it back to sleep; resting/dying resets them
+- **Camps & patrols** along the roads (the *finite* enemy source): packs of ordinary foes that wake on approach. Unlike nests they **don't respawn** — clear one and it stays cleared; flee mid-fight and survivors despawn but your kills stick. Only **resting at a campfire (or dying) re-arms them**
 - Clearing a special building grants a **run-scoped boon draft** (Shrine = Blessing, Cache = Arsenal, the three altars = build-defining pacts)
 - **Dojo hub** between runs — walkable room with training dummies, four guardian archers, and stations (Ryo Trader, Spirit Forge, The Road)
 - **Meta-progression**: earn **Ryo**, spend it on permanent upgrades at the Dojo's Ryo Trader; persisted in `localStorage` across runs

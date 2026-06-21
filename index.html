@@ -536,7 +536,9 @@ function generateBuildings(){
   const returnAt = new Set([3, 5, 7]);     // chain indices that earn a road home
   let th = rand(0, TAU), parent = dojo;
   for (let i=1; i<=order.length; i++){
-    const r = 800 + (i-1)*370 + rand(-50, 50);
+    // Wider radial step so adjacent zone bosses (always different kinds) stay
+    // far apart — two boss trigger-zones (CAMP_TRIGGER_R) can't overlap now.
+    const r = 800 + (i-1)*480 + rand(-50, 50);
     // first leg is the straight tutorial road; afterwards the bearing
     // advances so the chain spirals outward around the Dojo
     if (i > 1) th += clamp(950 / r, 0.45, 1.0) + rand(-0.06, 0.06);
@@ -563,7 +565,7 @@ function shuffle(arr){
 // shortcut home) with barricade gates that come down when it's cleared.
 // Movable entities collide with the forest circles; projectiles fly over.
 const MAZE = {
-  R: 4000,             // forest fill radius — past the last building it's solid wall
+  R: 4700,             // forest fill radius — past the last building it's solid wall
   HW: 85,              // corridor half-width (min carved path width = 2×HW)
   CLEAR_BUILDING: 230, // open ground around every building
   CLEAR_CAMPFIRE: 150, // open ground around every campfire
@@ -1255,6 +1257,7 @@ function newGame(){
     power:1, haste:1, magnet:1, xpMult:1, regen:0,
     inv:0, hurt:0, weapons:{ katana:1 }, passives:{}, walkPhase:0, moving:false,
     armor:0, revives:0, ryoMult:1, bonusWeapons:0,
+    rollT:0, rollCd:0, diveT:0, diveCd:0, deflectT:0, deflectCd:0,  // click/space abilities
     // sword-specific bonuses applied by the minimal upgrade pool (no-op in classic)
     swordCdMult:1, swordRangeBonus:0, swordArcBonus:0, swordDmgBonus:0,
     minimalUpgrades:{},
@@ -1291,6 +1294,8 @@ function newGame(){
   rebuildOrbit();
   // summoner nests are strung along the roads — dormant until you draw near
   game.nests = generateNests(game.buildings, game.paths);
+  // camps & patrols — finite packs that don't respawn unless you rest
+  game.mobs = generateMobCamps(game.buildings, game.paths, game.nests);
   showOnly(null); elHud.classList.remove('hidden'); elPauseBtn.classList.remove('hidden');
 }
 
@@ -1329,17 +1334,19 @@ cv.addEventListener('pointermove', e=>{ if (e.pointerType==='touch' && stick.on)
 cv.addEventListener('pointerup', e=>{ if (e.pointerType==='touch') pEnd(); });
 cv.addEventListener('pointercancel', e=>{ if (e.pointerType==='touch') pEnd(); });
 
-// ---------- mouse aim + aimed shot / dodge-roll (desktop primary) ----------
+// ---------- mouse aim + click abilities (desktop primary) ----------
+// Left-click = dodge roll toward the cursor (10s cd); right-click = diving bomb
+// toward the cursor (100s cd). Drafted weapons still auto-fire on their own.
 const mouse = { x: 0, y: 0 };
-let mouseDown = false, usingMouse = false;
+let usingMouse = false;
 addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; usingMouse = true; });
 cv.addEventListener('mousedown', e=>{
   mouse.x=e.clientX; mouse.y=e.clientY; usingMouse=true;
-  if (e.button===0) mouseDown=true;
-  else if (e.button===2 && game && game.state === STATE.PLAY && !game.dojoMode) startRoll();
+  if (!game || game.state !== STATE.PLAY || game.dojoMode) return;
+  if (e.button===0) startRoll();
+  else if (e.button===2) startDive();
 });
-addEventListener('mouseup', e=>{ if (e.button===0) mouseDown=false; });
-cv.addEventListener('contextmenu', e=> e.preventDefault());   // right-click dodge-roll
+cv.addEventListener('contextmenu', e=> e.preventDefault());   // free right-click for the dive
 // World-space angle from (px,py) to the cursor. Uses run-mode viewScale; the
 // camera maps world→screen as screen = W/2 + viewScale*(world - cam).
 function aimAngle(px, py){
@@ -1348,32 +1355,83 @@ function aimAngle(px, py){
   return Math.atan2(wy - py, wx - px);
 }
 
-// ---------- dodge roll + aimed bolt ----------
-const ROLL_TIME = 0.22, ROLL_CD = 0.7, ROLL_SPEED = 620;   // quick i-frame dash
-const AIM_CD = 0.30, AIM_DMG = 15, AIM_SPEED = 560;        // left-click ki bolt
-let aimCd = 0;
+// ---------- dodge roll · diving bomb · deflect burst ----------
+const ROLL_TIME = 0.22, ROLL_CD = 10, ROLL_SPEED = 620;     // left-click dodge roll (10s cd)
+const AIM_DMG = 15, AIM_SPEED = 560;                        // speed/dmg basis for deflected bolts
+// Diving bomb (right-click): leap to the clicked spot and slam for big AoE (100s cd).
+const DIVE_TIME = 0.45, DIVE_CD = 100, DIVE_REACH = 620, DIVE_AOE = 150, DIVE_DMG = 120;
+// Deflect Burst (spacebar): a brief parry window that turns nearby enemy bolts
+// back on their casters. The tight window is what makes it a timing move.
+const DEFLECT_WINDOW = 0.18, DEFLECT_CD = 1.4, DEFLECT_R = 110, DEFLECT_DMG = 2.0;
+// Global projectile speed scale — every shot (yours and theirs) flies at half pace.
+const PROJ_SLOW = 0.5;
+// Telegraph/charge-up duration scale — every wind-up tell takes twice as long.
+const TELL_MUL = 2;
 function startRoll(){
   const P = player;
-  if (!P || P.rollT > 0 || P.rollCd > 0) return;
-  const v = inputVec();
-  // roll in the move direction, or toward the cursor when standing still
-  const a = (v.x || v.y) ? Math.atan2(v.y, v.x) : aimAngle(P.x, P.y);
+  if (!P || P.rollT > 0 || P.rollCd > 0 || P.diveT > 0) return;
+  const a = aimAngle(P.x, P.y);                 // dodge toward the clicked location
   P.raDx = Math.cos(a); P.raDy = Math.sin(a);
   P.rollT = ROLL_TIME; P.rollCd = ROLL_CD;
-  P.inv = Math.max(P.inv, ROLL_TIME + 0.06);   // invulnerable through the roll
+  P.inv = Math.max(P.inv, ROLL_TIME + 0.06);    // invulnerable through the roll
   lastAng = a;
   for (let i=0;i<8;i++){ const sa=rand(0,TAU), sp=rand(40,110);
     fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(sa)*sp, vy:Math.sin(sa)*sp, t:0, life:rand(.2,.4), c:'#cdbfa0' }); }
 }
-function fireAimedBolt(){
+// Diving bomb: arc to the clicked location (i-frames the whole way) and detonate.
+function startDive(){
   const P = player;
-  const a = aimAngle(P.x, P.y);
-  shots.push({ kind:'aimbolt', x:P.x, y:P.y, vx:Math.cos(a)*AIM_SPEED, vy:Math.sin(a)*AIM_SPEED,
-    dmg: AIM_DMG*P.power, r:7, life:0.75, pierce:0, rot:a });
-  lastAng = a;
-  fx.push({ kind:'spark', x:P.x+Math.cos(a)*16, y:P.y+Math.sin(a)*16,
-    vx:Math.cos(a)*70, vy:Math.sin(a)*70, t:0, life:0.18, c:'#7ce8ef' });
+  if (!P || P.diveCd > 0 || P.diveT > 0 || P.rollT > 0) return;
+  const wx = game.cam.x + (mouse.x - W/2)/viewScale;
+  const wy = game.cam.y + (mouse.y - H/2)/viewScale;
+  let dx = wx - P.x, dy = wy - P.y; const L = Math.hypot(dx,dy) || 1;
+  const reach = Math.min(L, DIVE_REACH);
+  P.dsx = P.x; P.dsy = P.y; P.dtx = P.x + dx/L*reach; P.dty = P.y + dy/L*reach;
+  P.diveT = DIVE_TIME; P.diveMax = DIVE_TIME; P.diveCd = DIVE_CD;
+  P.inv = Math.max(P.inv, DIVE_TIME + 0.05);
+  lastAng = Math.atan2(dy, dx);
+  for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(60,140);
+    fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.2,.4), c:'#ffd34d' }); }
 }
+function resolveDive(){
+  const P = player;
+  shake = Math.max(shake, 16);
+  const R = DIVE_AOE, dmg = DIVE_DMG * P.power;
+  for (const e of enemies){
+    if (e.dead || e.dummy) continue;
+    const dx = e.x - P.x, dy = e.y - P.y;
+    if (dx*dx + dy*dy < (R + e.r)*(R + e.r)) damage(e, dmg, dx, dy);
+  }
+  fx.push({ kind:'shock', x:P.x, y:P.y, r:R, t:0, life:0.5, c:'#ffd34d' });
+  for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,320);
+    fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.7), c:'#ffd34d' }); }
+}
+// Deflect Burst: open a brief parry window; bolt deflection is handled in the
+// shot loop while player.deflectT is positive.
+function startDeflect(){
+  const P = player;
+  if (!P || P.deflectCd > 0 || P.deflectT > 0) return;
+  P.deflectT = DEFLECT_WINDOW; P.deflectCd = DEFLECT_CD;
+  shake = Math.max(shake, 3);
+  fx.push({ kind:'shock', x:P.x, y:P.y, r:DEFLECT_R, t:0, life:0.3, c:'#bfe9ff' });
+}
+// Turn an enemy bolt back on the nearest foe as a fast player projectile.
+function deflectBolt(s){
+  let tgt = null, best = Infinity;
+  for (const e of enemies){ if (e.dead) continue;
+    const dx=e.x-s.x, dy=e.y-s.y, d2=dx*dx+dy*dy; if (d2 < best){ best=d2; tgt=e; } }
+  const a = tgt ? Math.atan2(tgt.y - s.y, tgt.x - s.x) : Math.atan2(-s.vy, -s.vx);
+  s.foe = false; s.kind = 'aimbolt';
+  s.vx = Math.cos(a)*AIM_SPEED; s.vy = Math.sin(a)*AIM_SPEED; s.rot = a;
+  s.dmg = (s.dmg || 8) * DEFLECT_DMG * (player.power || 1);
+  s.pierce = 1; s.life = 1.0; s.ox = s.x; s.oy = s.y;   // reset range origin
+  shake = Math.max(shake, 4);
+  for (let i=0;i<8;i++){ const sa=rand(0,TAU), ssp=rand(60,160);
+    fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(sa)*ssp, vy:Math.sin(sa)*ssp, t:0, life:rand(.15,.35), c:'#bfe9ff' }); }
+}
+// Integrate a projectile's position at the global slow factor — every shot
+// (yours and theirs) travels at half speed, so they're all dodgeable/parryable.
+function stepShot(s, dt){ s.x += s.vx*dt*PROJ_SLOW; s.y += s.vy*dt*PROJ_SLOW; }
 
 function inputVec(){
   let dx=0, dy=0;
@@ -1440,7 +1498,7 @@ function bossPickAbility(e){
 function startEnemyAttack(e, dx, dy){
   const A = e.boss ? bossPickAbility(e) : ENEMY_ATK[enemyType(e)];
   if (!A) return;
-  e.curAtk = A; e.atk = 'wind'; e.windMax = A.wind; e.windT = A.wind;
+  e.curAtk = A; e.atk = 'wind'; e.windMax = A.wind * TELL_MUL; e.windT = e.windMax;
   if (A.type === 'tele'){
     const ang = Math.atan2(dy, dx);
     if (A.lunge){ e.tgx = e.x + Math.cos(ang)*A.lunge; e.tgy = e.y + Math.sin(ang)*A.lunge; }
@@ -1495,7 +1553,10 @@ function hitPlayer(dmg){
 let _nid = 1;
 const NEST = {
   along: 600,      // spacing between nests along a road
-  clearB: 290,     // keep clear of building boss arenas
+  // keep summoners (one kind of boss) clear of building/zone bosses (the other
+  // kind). Zone bosses are also spaced further apart in generateBuildings so
+  // two different boss kinds never wake on top of each other.
+  clearB: 330,
   clearDojo: 400,  // safe radius around the Dojo
   aggro: 320,      // engage distance
   leash: 760,      // flee past this and the summoner sleeps again
@@ -1582,11 +1643,113 @@ function summonAdd(s){
   for (let i=0;i<6;i++){ const a=rand(0,TAU), sp=rand(40,100);
     fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.2,.4), c:'#b07ce0' }); }
 }
-// rest at a campfire / death → the world resets: nests sleep, hordes clear
+// rest at a campfire / death → the world resets: nests sleep, hordes clear,
+// and every cleared camp/patrol is re-armed (the ONLY thing that respawns them).
 function resetNests(){
-  if (!game || !game.nests) return;
-  for (const n of game.nests){ n.state = 'dormant'; n.summoner = null; }
-  enemies = enemies.filter(e => e.dummy || !(e.summoner || e.summonedNest !== undefined));
+  if (!game) return;
+  if (game.nests) for (const n of game.nests){ n.state = 'dormant'; n.summoner = null; }
+  if (game.mobs)  for (const c of game.mobs){ c.state = 'idle'; c.killed = 0; }
+  enemies = enemies.filter(e => e.dummy ||
+    !(e.summoner || e.summonedNest !== undefined || e.mobId !== undefined));
+}
+
+// =====================================================================
+//  CAMPS & PATROLS — fixed groups of ordinary foes strung across the world.
+//  Unlike summoner nests (which pump an endless horde), a camp/patrol is a
+//  FINITE pack: clear it and it stays cleared. Walk away mid-fight and its
+//  survivors despawn but your kills stick — re-approach and only the remainder
+//  spawns. The only thing that fully restores them is RESTING at a campfire
+//  (or dying), via resetNests. No global timer, no trickle respawns.
+// =====================================================================
+let _mid = 1;
+const MOB = {
+  along: 200,      // spacing of camp/patrol drops along the roads (dense → lots)
+  offset: 60,      // how far off-center a camp sits (stays within the corridor)
+  clearB: 320,     // keep clear of building boss arenas
+  clearDojo: 470,  // safe radius around the Dojo (the opening stays calm)
+  spacing: 120,    // min distance between two groups
+  trigger: 300,    // approach distance that wakes a group
+  leash: 860,      // flee past this and survivors despawn (kills persist)
+  campMin: 3, campMax: 6,
+  patrolMin: 2, patrolMax: 4,
+};
+function irand(lo, hi){ return lo + ((Math.random()*(hi-lo+1))|0); }
+// roster widens with depth, mirroring the nest add pool
+function mobRoster(d){
+  const r = ['footpad','footpad'];
+  if (d>=2) r.push('ronin');
+  if (d>=3) r.push('ninja');
+  if (d>=4) r.push('brute');
+  if (d>=5) r.push('ronin','ninja');
+  return r;
+}
+function makeMobGroup(x, y, kind, depth){
+  const total = kind==='camp' ? irand(MOB.campMin, MOB.campMax)
+                              : irand(MOB.patrolMin, MOB.patrolMax);
+  return { _id:_mid++, x, y, kind, depth, total, killed:0, state:'idle' };
+}
+// strew camps (off-road clusters) and patrols (on-road packs) along every
+// forward road, alternating, depth-scaled. Lots of them — the roads are busy.
+function generateMobCamps(buildings, paths, nests){
+  const mobs = [], dojo = buildings[0];
+  const ok = (x,y)=>{
+    if (Math.hypot(x-dojo.x, y-dojo.y) < MOB.clearDojo) return false;
+    for (const b of buildings) if (Math.hypot(x-b.x, y-b.y) < MOB.clearB) return false;
+    for (const m of mobs) if (Math.hypot(x-m.x, y-m.y) < MOB.spacing) return false;
+    return isWalkable(x, y, 24);
+  };
+  let toggle = 0;
+  for (const e of paths.edges){
+    if (e.isReturn) continue;
+    const pts = e.pts, depth = e.of.depth || 1;
+    let dun = MOB.along * 0.4;
+    for (let k=1; k<pts.length; k++){
+      let ax=pts[k-1].x, ay=pts[k-1].y;
+      const bx=pts[k].x, by=pts[k].y;
+      let seg = Math.hypot(bx-ax, by-ay) || 1;
+      const dirx=(bx-ax)/seg, diry=(by-ay)/seg, nx=-diry, ny=dirx;  // unit road + normal
+      while (dun <= seg){
+        ax += dirx*dun; ay += diry*dun; seg -= dun;
+        const kind = (toggle++ % 2) ? 'patrol' : 'camp';
+        // camps sit at a road shoulder (falling back to the centre if the
+        // shoulder is forest); patrols sit on the road itself.
+        let x = ax, y = ay;
+        if (kind === 'camp'){
+          const side = Math.random()<0.5 ? -1 : 1;
+          const sx = ax + nx*MOB.offset*side, sy = ay + ny*MOB.offset*side;
+          if (ok(sx, sy)){ x = sx; y = sy; }
+        }
+        if (ok(x, y)) mobs.push(makeMobGroup(x, y, kind, depth));
+        dun = MOB.along;
+      }
+      dun -= seg;
+    }
+  }
+  return mobs;
+}
+// spawn the remaining members of a group (total − already-killed)
+function spawnMobGroup(c){
+  c.state = 'active';
+  const roster = mobRoster(c.depth), mul = 1 + (c.depth-1)*0.08;
+  const remaining = Math.max(0, c.total - c.killed);
+  for (let i=0; i<remaining; i++){
+    const t = ENEMY_TYPES[pick(roster)];
+    let ox, oy;
+    if (c.kind==='patrol'){ ox = rand(-95,95); oy = rand(-95,95); }     // strung along
+    else { const a=rand(0,TAU), rr=rand(0,62); ox=Math.cos(a)*rr; oy=Math.sin(a)*rr; }
+    enemies.push({ x:c.x+ox, y:c.y+oy, r:t.r, hp:t.hp*mul, maxhp:t.hp*mul,
+      speed:t.speed*rand(.9,1.12), dmg:t.dmg, xp:t.xp, color:t.color,
+      hit:0, boss:false, sep:0, state:'wander', sight:t.sight, callR:t.callR,
+      wDir:rand(0,TAU), wTimer:rand(1.2,3.2), wSpeed:rand(0.35,0.55),
+      alertT:0, chargeT:0, chargeCheckT:rand(0,0.6), mobId:c._id });
+  }
+  for (let i=0;i<8;i++){ const a=rand(0,TAU), sp=rand(40,120);
+    fx.push({ kind:'spark', x:c.x, y:c.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.2,.5), c:'#d8a85a' }); }
+}
+// player fled — survivors vanish (NOT counted as kills); the group re-arms idle
+function despawnMob(c){
+  for (const e of enemies){ if (!e.dead && e.mobId === c._id) e.dead = true; }
+  c.state = 'idle';
 }
 
 // Approaching a fresh camp pops out its named boss. The marcher stream from
@@ -1700,6 +1863,11 @@ function damage(e, dmg, kx=0, ky=0){
 }
 function killEnemy(e){
   e.dead = true; game.kills++;
+  // camp/patrol member down → bank the kill so it won't respawn on re-approach
+  if (e.mobId != null && game.mobs){
+    const c = game.mobs.find(m => m._id === e.mobId);
+    if (c) c.killed++;
+  }
   if (player.lifesteal) player.hp = Math.min(player.maxhp, player.hp + player.lifesteal);  // Bloodpact boon
   if (e.summoner && e.nest){ e.nest.state = 'dead'; e.nest.summoner = null; dissolveHorde(e.nest, true); }
   if (e.boss) game.bossKills = (game.bossKills||0) + 1;
@@ -2051,13 +2219,21 @@ function update(dt){
   P.moving = !!(v.x || v.y);
   if (P.moving){ lastAng = Math.atan2(v.y, v.x); P.walkPhase += dt*12; }
   if (P.rollCd > 0) P.rollCd -= dt;
-  let mvx = v.x * P.speed, mvy = v.y * P.speed;
-  if (P.rollT > 0){ P.rollT -= dt; mvx = P.raDx * ROLL_SPEED; mvy = P.raDy * ROLL_SPEED; }
-  P.x += mvx * dt;
-  P.y += mvy * dt;
-  // aimed ranged shot (left mouse, held = auto-fire at cooldown) — additive to autos
-  if (aimCd > 0) aimCd -= dt;
-  if (mouseDown && aimCd <= 0 && !game.dojoMode && game.state === STATE.PLAY){ fireAimedBolt(); aimCd = AIM_CD; }
+  if (P.diveCd > 0) P.diveCd -= dt;
+  if (P.diveT > 0){
+    // diving bomb in flight — arc to the locked target, then detonate on landing
+    P.diveT -= dt;
+    const k = clamp(1 - Math.max(0, P.diveT)/P.diveMax, 0, 1);
+    P.x = P.dsx + (P.dtx - P.dsx)*k;
+    P.y = P.dsy + (P.dty - P.dsy)*k;
+    P.inv = Math.max(P.inv, dt + 0.02);
+    if (P.diveT <= 0) resolveDive();
+  } else {
+    let mvx = v.x * P.speed, mvy = v.y * P.speed;
+    if (P.rollT > 0){ P.rollT -= dt; mvx = P.raDx * ROLL_SPEED; mvy = P.raDy * ROLL_SPEED; }
+    P.x += mvx * dt;
+    P.y += mvy * dt;
+  }
   if (game.dojoMode){
     // clamp to dojo room
     const hw = DOJO.WIDTH/2 - P.r - DOJO.WALL;
@@ -2099,6 +2275,8 @@ function update(dt){
   }
   if (P.inv>0) P.inv -= dt;
   if (P.hurt>0) P.hurt -= dt;
+  if (P.deflectT>0) P.deflectT -= dt;
+  if (P.deflectCd>0) P.deflectCd -= dt;
 
   // enemy flow (skip in dojo — peaceful). No ambient spawns: pressure comes
   // from the world's fixed summoner nests + each zone's boss building.
@@ -2123,6 +2301,18 @@ function update(dt){
             if (n.summoner.sumCd <= 0){ n.summoner.sumCd = NEST.addCd*rand(.8,1.2); summonAdd(n.summoner); }
           }
         }
+      }
+    }
+    // camps & patrols: finite packs that wake on approach and DON'T respawn
+    // (until you rest). Survivors despawn if you leash away; kills persist.
+    if (game.mobs) for (const c of game.mobs){
+      if (c.state === 'cleared') continue;
+      const dx = P.x - c.x, dy = P.y - c.y, d2 = dx*dx + dy*dy;
+      if (c.state === 'idle'){
+        if (d2 < MOB.trigger*MOB.trigger) spawnMobGroup(c);
+      } else { // active
+        if (c.killed >= c.total){ c.state = 'cleared'; }
+        else if (d2 > MOB.leash*MOB.leash) despawnMob(c);
       }
     }
   }
@@ -2244,8 +2434,13 @@ function update(dt){
 
     // ENEMY PROJECTILE — slow, dodgeable; damages the player, ignores enemies
     if (s.foe){
-      s.x += s.vx*dt; s.y += s.vy*dt;
+      stepShot(s, dt);
       s.rot = Math.atan2(s.vy, s.vx);
+      // DEFLECT BURST — a well-timed spacebar parry knocks nearby bolts back
+      if (player.deflectT > 0){
+        const ddx = s.x - player.x, ddy = s.y - player.y;
+        if (ddx*ddx + ddy*ddy < DEFLECT_R*DEFLECT_R){ deflectBolt(s); continue; }
+      }
       const pdx = player.x - s.x, pdy = player.y - s.y;
       if (pdx*pdx + pdy*pdy < (s.r + player.r)*(s.r + player.r)){
         s.life = 0;
@@ -2300,7 +2495,7 @@ function update(dt){
         s.vx = Math.cos(newA) * s.speed;
         s.vy = Math.sin(newA) * s.speed;
       }
-      s.x += s.vx*dt; s.y += s.vy*dt;
+      stepShot(s, dt);
       // detonate on touching any enemy
       for (const e of enemies){
         if (e.dead) continue;
@@ -2342,7 +2537,7 @@ function update(dt){
         s.vx = Math.cos(newA) * s.speed;
         s.vy = Math.sin(newA) * s.speed;
       }
-      s.x += s.vx*dt; s.y += s.vy*dt;
+      stepShot(s, dt);
       for (const e of enemies){
         if (e.dead) continue;
         if (Math.hypot(e.x-s.x, e.y-s.y) < e.r + s.r){
@@ -2356,7 +2551,7 @@ function update(dt){
 
     // RICOCHET SHURIKEN — flies, hits, redirects toward next nearest unhit
     if (s.kind==='rico'){
-      s.x += s.vx*dt; s.y += s.vy*dt;
+      stepShot(s, dt);
       s.rot += dt*20;
       for (const e of enemies){
         if (e.dead || s.hit.has(e._id)) continue;
@@ -2391,7 +2586,7 @@ function update(dt){
       continue;
     }
 
-    s.x += s.vx*dt; s.y += s.vy*dt;
+    stepShot(s, dt);
     if (s.kind==='shuriken') s.rot += dt*22;
     if (s.kind==='petal') s.rot += s.vr*dt;
     if (s.kind==='kunai') s.rot = Math.atan2(s.vy, s.vx);
@@ -2872,6 +3067,8 @@ function draw(){
 
   // dormant summoner nests — visible markers so you spot them while exploring
   if (game.nests) for (const n of game.nests){ if (n.state === 'dormant') drawNest(n); }
+  // idle camp/patrol markers so you can read a pack ahead before it wakes
+  if (game.mobs) for (const c of game.mobs){ if (c.state === 'idle') drawMobCamp(c); }
   // enemies
   // telegraphed-attack ground markers (under the enemies that cast them)
   for (const e of enemies){ if (e.windT > 0 && e.curAtk && e.curAtk.type === 'tele') drawTelegraph(e); }
@@ -2898,12 +3095,44 @@ function draw(){
 
   // joystick — fixed base visible during play, knob reflects current direction
   if (game.state === STATE.PLAY && SETTINGS.joystick) drawStick();
+  // ability cooldown pips (dodge / dive / deflect)
+  if (game.state === STATE.PLAY && !game.dojoMode) drawAbilityHud();
   // aim reticle — screen-space crosshair at the cursor (desktop run combat)
   if (game.state === STATE.PLAY && !game.dojoMode && usingMouse) drawReticle();
 }
+// Bottom-center pips for the three click/space abilities: a cooldown curtain
+// drains from the top, and the keycap line flips to a live countdown.
+function drawAbilityHud(){
+  const P = player; if (!P) return;
+  const items = [
+    { k:'LMB', name:'Dodge',   cd:P.rollCd||0,    max:ROLL_CD },
+    { k:'RMB', name:'Dive',    cd:P.diveCd||0,    max:DIVE_CD },
+    { k:'SPC', name:'Deflect', cd:P.deflectCd||0, max:DEFLECT_CD },
+  ];
+  const n=items.length, bw=64, bh=30, gap=10, totalW=n*bw+(n-1)*gap;
+  let x = W/2 - totalW/2; const y = H - 64;
+  ctx.save();
+  ctx.textAlign='center';
+  for (const it of items){
+    const ready = it.cd <= 0, frac = ready ? 0 : clamp(it.cd/it.max, 0, 1);
+    ctx.fillStyle = ready ? 'rgba(34,42,38,0.72)' : 'rgba(28,28,32,0.72)';
+    ctx.fillRect(x, y, bw, bh);
+    if (!ready){ ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(x, y, bw, bh*frac); }
+    ctx.strokeStyle = ready ? 'rgba(124,232,239,0.9)' : 'rgba(150,150,160,0.5)';
+    ctx.lineWidth=1.5; ctx.strokeRect(x, y, bw, bh);
+    ctx.fillStyle = ready ? '#dffaff' : '#9aa3ab';
+    ctx.font='bold 11px -apple-system,sans-serif';
+    ctx.fillText(it.name, x+bw/2, y+13);
+    ctx.font='9px -apple-system,sans-serif';
+    ctx.fillStyle = ready ? 'rgba(180,200,210,0.9)' : 'rgba(160,160,170,0.8)';
+    ctx.fillText(ready ? it.k : Math.ceil(it.cd)+'s', x+bw/2, y+24);
+    x += bw+gap;
+  }
+  ctx.restore();
+}
 
 function drawReticle(){
-  const ready = aimCd <= 0;
+  const ready = !player || player.rollCd <= 0;   // reflects dodge-roll readiness
   ctx.save();
   ctx.translate(mouse.x, mouse.y);
   ctx.strokeStyle = ready ? 'rgba(124,232,239,0.85)' : 'rgba(124,232,239,0.35)';
@@ -3324,6 +3553,26 @@ function drawNest(n){
   ctx.beginPath(); ctx.moveTo(-6,6); ctx.lineTo(-4,-16); ctx.lineTo(4,-16); ctx.lineTo(6,6); ctx.closePath(); ctx.fill();
   ctx.fillStyle = `rgba(176,124,224,${0.4 + 0.35*Math.sin(t*2)})`;
   ctx.beginPath(); ctx.arc(0, -8, 4, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+// idle camp/patrol marker — a small banner so a pack reads from a distance.
+// Camp = a tent; patrol = a planted spear with a pennant.
+function drawMobCamp(c){
+  ctx.save(); ctx.translate(c.x, c.y);
+  ctx.globalAlpha = 0.8;
+  ctx.strokeStyle = 'rgba(216,168,90,0.4)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 4, 16, 0, TAU); ctx.stroke();
+  if (c.kind === 'camp'){
+    ctx.fillStyle = '#3a2c1a';                          // tent
+    ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(11,6); ctx.lineTo(-11,6); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(216,168,90,0.8)';
+    ctx.beginPath(); ctx.moveTo(0,-14); ctx.lineTo(0,6); ctx.stroke();
+  } else {
+    ctx.strokeStyle = '#6a5230'; ctx.lineWidth = 2;     // planted spear
+    ctx.beginPath(); ctx.moveTo(-2,8); ctx.lineTo(2,-14); ctx.stroke();
+    ctx.fillStyle = 'rgba(216,168,90,0.85)';            // pennant
+    ctx.beginPath(); ctx.moveTo(2,-14); ctx.lineTo(13,-10); ctx.lineTo(2,-6); ctx.closePath(); ctx.fill();
+  }
   ctx.restore();
 }
 // active summoner — a floating hooded conjurer over a turning rune circle
@@ -4682,9 +4931,13 @@ D('dojo-interact').onclick = ()=> dojoActivate();
 addEventListener('keydown', e=>{
   if (e.repeat || !game || game.state !== STATE.PLAY) return;
   const k = e.key.toLowerCase();
-  if (!(e.key===' ' || e.key==='Enter' || k==='e')) return;
-  // Keyboard interaction is only for focused stations; right-click dodge-rolls.
-  if (game.interactWith) dojoActivate();
+  if (e.key===' '){
+    // Space: interact when standing on something usable, else DEFLECT BURST.
+    if (game.interactWith) dojoActivate();
+    else if (!game.dojoMode) startDeflect();
+    return;
+  }
+  if ((e.key==='Enter' || k==='e') && game.interactWith) dojoActivate();
 });
 // Wipes all META progression (Ryo, upgrades, lifetime stats, armed Pit).
 // SETTINGS (joystick / upgradeMode) are intentionally preserved as
@@ -4714,8 +4967,9 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     // --- headless-sim hooks (smoke test in test/smoke.js drives these) ---
     update, draw, STATE, WEAPONS, PASSIVES, ENEMY_TYPES,
     buildOptions, applyOption, gainXP, damage,
+    resolveDive, startDeflect, spawnMobGroup, despawnMob, MOB,
     get orbs(){ return orbs; }, get blades(){ return blades; },
-    get petals(){ return petals; },
+    get petals(){ return petals; }, get mobs(){ return game && game.mobs; },
     get game(){return game}, set game(v){game=v},
     get player(){return player}, set player(v){player=v},
     get enemies(){return enemies},

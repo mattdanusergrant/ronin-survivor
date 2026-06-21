@@ -323,6 +323,54 @@ test('Dojo: startDojo enters peaceful hub with dummies + 4 archers, frames run',
   assertFiniteXY(art.player, 'player(dojo)');
 });
 
+test('diving bomb: resolveDive deals AoE damage to nearby foes (right-click)', () => {
+  art.newGame();
+  const p = art.player;
+  const near = spawnEnemy(art, 'brute', p.x + 40, p.y);   // inside DIVE_AOE
+  const far = spawnEnemy(art, 'brute', p.x + 4000, p.y);  // well outside
+  const nearHp = near.hp, farHp = far.hp;
+  art.resolveDive();
+  assert(near.hp < nearHp, 'dive did not damage an enemy in the blast');
+  assert(far.hp === farHp, 'dive damaged an enemy outside its radius');
+});
+
+test('deflect burst: a parried bolt stops hurting you and flips to your side (space)', () => {
+  art.newGame();
+  const p = art.player; p.hp = p.maxhp; p.inv = 0;
+  spawnEnemy(art, 'footpad', p.x + 300, p.y);             // a target to deflect toward
+  art.shots.push({ kind: 'foeBolt', foe: true, x: p.x + 6, y: p.y,
+    vx: -50, vy: 0, dmg: 999, r: 7, life: 3, rot: Math.PI });
+  art.startDeflect();
+  art.update(1 / 60);
+  const liveFoeNear = art.shots.some(s => s.foe &&
+    Math.hypot(s.x - p.x, s.y - p.y) < 130);
+  assert(p.hp === p.maxhp, 'deflect window let the bolt through');
+  assert(!liveFoeNear, 'bolt was not deflected (still a live enemy bolt on you)');
+});
+
+test('camps & patrols: generated, finite, cleared persists, rest re-arms', () => {
+  art.newGame();
+  const mobs = art.mobs;
+  assert(Array.isArray(mobs) && mobs.length > 0, 'no camps/patrols generated');
+  assert(mobs.every(m => m.state === 'idle'), 'camps should start idle');
+  assert(mobs.some(m => m.kind === 'camp') && mobs.some(m => m.kind === 'patrol'),
+    'expected both camps and patrols');
+  const c = mobs.find(m => m.kind === 'camp');
+  art.spawnMobGroup(c);
+  assert(c.state === 'active', 'spawnMobGroup did not activate the camp');
+  const members = art.enemies.filter(e => e.mobId === c._id);
+  assert(members.length === c.total, 'wrong number of camp members spawned');
+  for (const e of members) art.damage(e, e.hp + 999);    // wipe the camp
+  assert(c.killed >= c.total, 'kills were not banked on the camp');
+  // a cleared camp must NOT respawn on re-approach (only a rest does that)
+  art.despawnMob(c);
+  art.spawnMobGroup(c);
+  assert(art.enemies.filter(e => e.mobId === c._id && !e.dead).length === 0,
+    'cleared camp respawned without a rest');
+  art.resetNests();
+  assert(c.state === 'idle' && c.killed === 0, 'rest/death did not re-arm the camp');
+});
+
 test('nest reset: resetNests puts every nest back to dormant and clears the horde', () => {
   art.newGame();
   // fake-activate a nest with a live summoned add
