@@ -22,8 +22,10 @@ A *Vampire Survivors*–style horde-survival auto-battler with an **Afro Samurai
 **Controls (desktop-first):**
 
 - **Move** — WASD / arrow keys
-- **Left-click** — **dodge roll** toward the cursor (a quick i-frame dash; **2s cooldown**)
-- **Right-click** — **diving bomb attack** toward the cursor: leap in and slam for big AoE (**10s cooldown**)
+- **Dodge** — **double-tap** a movement key to dash that way (i-frames). Each direction has its **own cooldown**, so you can dash a different way instantly — you just can't spam the same one.
+- **Left-click** — **grappling hook** toward the cursor: anchors on the first wall/enemy/max-range and reels you in (i-frames)
+- **Right-click** — **Chi Burst**: a targeted explosion centered on the cursor
+- **Throwing kunai** — auto-thrown at whatever enemy your **cursor hovers**, if it's in range (no click)
 - **Spacebar** — **Deflect Burst**: a brief parry window that knocks enemy projectiles back on their casters (good timing required). Also interacts when you're standing on something usable.
 - **Interact** — `E` / `Enter` / `Space` when standing on something usable (a campfire checkpoint, the Dojo, or a Dojo station)
 - Your drafted weapons fire **automatically** on top of all this
@@ -35,7 +37,7 @@ Walk over glowing **ki** to fill the level bar; on level-up, **click a boon** to
 
 ## What's in the prototype
 
-- Desktop controls: WASD move; **left-click dodge roll** (2s cd), **right-click diving bomb** (10s cd), **spacebar Deflect Burst** (parry); `E` / `Enter` / `Space` interact (touch drag-to-move kept as a fallback)
+- Desktop controls: WASD move; **double-tap to dodge** (per-direction cooldown); **left-click grappling hook**, **right-click Chi Burst**, **spacebar Deflect Burst**; cursor-hover **throwing kunai**; `E` / `Enter` / `Space` interact (touch drag-to-move kept as a fallback)
 - Auto-firing weapons × 6 levels (Katana Slash, Throwing Stars, Ki Wave, Spirit Blades, Iron Crusher, …) + stackable passives
 - All projectiles (yours and theirs) and all enemy charge-up tells move at a **deliberate half-speed** — combat reads as dodge/parry timing, not bullet-dodging reflexes
 - Level-up boon draft (3-of-N, pauses time)

@@ -59,7 +59,7 @@ Search for these landmarks (line numbers drift; the names are stable):
 | Settings (persisted) | `SETTINGS` / `SETTINGS_KEY` (`ronin-settings-v1`); `upgradeMode` = `classic`\|`minimal` |
 | Meta-progression (persisted) | `META` / `META_KEY` (`ronin-meta-v1`), `META_UPGRADES`, `applyMeta(p)` |
 | Weapons / passives | `WEAPONS`, `PASSIVES`, `MINIMAL_UPGRADES` (each entry has `apply`/`desc`) |
-| Player abilities | left-click `startRoll` (dodge, 2s cd), right-click `startDive`/`resolveDive` (bomb, 10s cd), space `startDeflect`/`deflectBolt` (parry); constants `ROLL_*`/`DIVE_*`/`DEFLECT_*` |
+| Player abilities | double-tap dodge `tryDodge` (per-dir `player.dodgeCd`, detected in the keydown handler via `DIR_OF`/`tapTime`), left-click `startGrapple`/`updateGrapple` (hook), right-click `startChiBurst` (AoE), space `startDeflect`/`deflectBolt` (parry), cursor-hover `tryThrowKunai`/`throwKunai`; constants `DODGE_*`/`HOOK_*`/`CHI_*`/`KUNAI_*`/`DEFLECT_*` |
 | Projectile/tell pacing | `PROJ_SLOW` (0.5× shot speed, applied in `stepShot`), `TELL_MUL` (2× wind-up, applied in `startEnemyAttack`) |
 | Level-up draft | `buildOptions` / `buildMinimalOptions` → `openLevelUp` → `applyOption` |
 | Enemies | `ENEMY_TYPES`; enemy AI lives in `update()` (states: `wander`→`alert`→`chase`) |

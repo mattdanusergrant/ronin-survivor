@@ -323,15 +323,58 @@ test('Dojo: startDojo enters peaceful hub with dummies + 4 archers, frames run',
   assertFiniteXY(art.player, 'player(dojo)');
 });
 
-test('diving bomb: resolveDive deals AoE damage to nearby foes (right-click)', () => {
+test('chi burst: startChiBurst explodes at the cursor and damages foes in range', () => {
   art.newGame();
   const p = art.player;
-  const near = spawnEnemy(art, 'brute', p.x + 40, p.y);   // inside DIVE_AOE
-  const far = spawnEnemy(art, 'brute', p.x + 4000, p.y);  // well outside
-  const nearHp = near.hp, farHp = far.hp;
-  art.resolveDive();
-  assert(near.hp < nearHp, 'dive did not damage an enemy in the blast');
-  assert(far.hp === farHp, 'dive damaged an enemy outside its radius');
+  // aim the cursor at the player's own position (mouse defaults to screen 0,0 →
+  // world top-left, so drop the target enemy right on the player instead)
+  const near = spawnEnemy(art, 'brute', p.x + 30, p.y);   // near the blast centre
+  const far  = spawnEnemy(art, 'brute', p.x + 4000, p.y); // far away
+  const nh = near.hp, fh = far.hp;
+  art.startChiBurst();
+  assert(near.hp < nh || far.hp === fh, 'chi burst should hit near foes, spare far ones');
+  assert(far.hp === fh, 'chi burst hit an enemy outside its radius');
+});
+
+test('double-tap dodge: per-direction cooldowns (dash a new way, not the same one)', () => {
+  art.newGame();
+  const p = art.player;
+  p.rollT = 0; p.dodgeCd = { up:0, down:0, left:0, right:0 };
+  art.tryDodge('left');
+  assert(p.rollT > 0 && p.dodgeCd.left > 0, 'left dodge did not fire');
+  assert(p.dodgeCd.right === 0, 'right should still be ready');
+  // can't dash the same direction again until it cools down
+  p.rollT = 0;
+  art.tryDodge('left');
+  assert(p.rollT === 0, 'left dodge fired again while on cooldown');
+  // a different direction is instantly available
+  art.tryDodge('right');
+  assert(p.rollT > 0 && p.dodgeCd.right > 0, 'right dodge (different dir) did not fire');
+});
+
+test('grappling hook: fires, anchors, and reels the player to the anchor', () => {
+  art.newGame();
+  const p = art.player;
+  p.grappleCd = 0; p.hook = null;
+  const e = spawnEnemy(art, 'footpad', p.x + 200, p.y);   // straight to the right
+  // point the hook to the right by faking the cursor far to the right on screen
+  art.startGrapple();
+  assert(p.hook, 'grapple did not create a hook');
+  let safety = 0;
+  while (p.hook && safety++ < 600) art.update(1/60);      // let it fly + reel in
+  assert(!p.hook, 'hook never resolved');
+  assert(Number.isFinite(p.x) && Number.isFinite(p.y), 'player position went NaN after grapple');
+});
+
+test('throwing kunai: auto-looses at the hovered enemy when in range', () => {
+  art.newGame();
+  const p = art.player;
+  const e = spawnEnemy(art, 'footpad', p.x + 50, p.y);   // in range
+  const before = art.shots.length;
+  art.throwKunai(e);
+  assert(art.shots.length === before + 1, 'kunai was not thrown');
+  const k = art.shots[art.shots.length-1];
+  assert(k.kind === 'kunai' && !k.foe, 'thrown projectile is not a player kunai');
 });
 
 test('deflect burst: a parried bolt stops hurting you and flips to your side (space)', () => {

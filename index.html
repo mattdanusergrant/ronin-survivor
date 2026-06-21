@@ -991,7 +991,9 @@ function newGame(){
     power:1, haste:1, magnet:1, xpMult:1, regen:0,
     inv:0, hurt:0, weapons:{ katana:1 }, passives:{}, walkPhase:0, moving:false,
     armor:0, revives:0, ryoMult:1, bonusWeapons:0,
-    rollT:0, rollCd:0, diveT:0, diveCd:0, deflectT:0, deflectCd:0,  // click/space abilities
+    // abilities: double-tap dodge (per-dir cd), grapple, chi burst, deflect, kunai
+    rollT:0, raDx:0, raDy:0, dodgeCd:{ up:0, down:0, left:0, right:0 },
+    grappleCd:0, chiCd:0, kunaiCd:0, deflectT:0, deflectCd:0, hook:null,
     // sword-specific bonuses applied by the minimal upgrade pool (no-op in classic)
     swordCdMult:1, swordRangeBonus:0, swordArcBonus:0, swordDmgBonus:0,
     minimalUpgrades:{},
@@ -1025,10 +1027,23 @@ function newGame(){
 //  INPUT
 // =====================================================================
 const keys = {};
+// double-tap a movement key to dodge in that direction (per-direction cooldown)
+const DIR_OF = { w:'up', s:'down', a:'left', d:'right',
+  arrowup:'up', arrowdown:'down', arrowleft:'left', arrowright:'right' };
+let tapTime = {};
 addEventListener('keydown', e=>{
   if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
-  keys[e.key.toLowerCase()] = true;
+  const k = e.key.toLowerCase();
+  keys[k] = true;
   if (e.key === 'Escape' || e.key === 'p') togglePause();
+  if (!e.repeat){
+    const dir = DIR_OF[k];
+    if (dir){
+      const now = (typeof performance!=='undefined' ? performance.now() : Date.now())/1000;
+      if (tapTime[dir] != null && now - tapTime[dir] < DTAP_WINDOW) tryDodge(dir);
+      tapTime[dir] = now;
+    }
+  }
 });
 addEventListener('keyup', e=>{ keys[e.key.toLowerCase()] = false; });
 
@@ -1057,18 +1072,19 @@ cv.addEventListener('pointerup', e=>{ if (e.pointerType==='touch') pEnd(); });
 cv.addEventListener('pointercancel', e=>{ if (e.pointerType==='touch') pEnd(); });
 
 // ---------- mouse aim + click abilities (desktop primary) ----------
-// Left-click = dodge roll toward the cursor (10s cd); right-click = diving bomb
-// toward the cursor (100s cd). Drafted weapons still auto-fire on their own.
+// Left-click = grappling hook toward the cursor; right-click = chi burst
+// (targeted explosion at the cursor). Dodge is double-tap; kunai auto-throw on
+// hover. Drafted weapons still auto-fire on their own.
 const mouse = { x: 0, y: 0 };
 let usingMouse = false;
 addEventListener('mousemove', e=>{ mouse.x = e.clientX; mouse.y = e.clientY; usingMouse = true; });
 cv.addEventListener('mousedown', e=>{
   mouse.x=e.clientX; mouse.y=e.clientY; usingMouse=true;
   if (!game || game.state !== STATE.PLAY || game.dojoMode) return;
-  if (e.button===0) startRoll();
-  else if (e.button===2) startDive();
+  if (e.button===0) startGrapple();
+  else if (e.button===2) startChiBurst();
 });
-cv.addEventListener('contextmenu', e=> e.preventDefault());   // free right-click for the dive
+cv.addEventListener('contextmenu', e=> e.preventDefault());   // free right-click for chi burst
 // World-space angle from (px,py) to the cursor. Uses run-mode viewScale; the
 // camera maps world→screen as screen = W/2 + viewScale*(world - cam).
 function aimAngle(px, py){
@@ -1077,56 +1093,116 @@ function aimAngle(px, py){
   return Math.atan2(wy - py, wx - px);
 }
 
-// ---------- dodge roll · diving bomb · deflect burst ----------
-const ROLL_TIME = 0.22, ROLL_CD = 2, ROLL_SPEED = 620;     // left-click dodge roll (2s cd)
-const AIM_DMG = 15, AIM_SPEED = 560;                        // speed/dmg basis for deflected bolts
-// Diving bomb (right-click): leap to the clicked spot and slam for big AoE (10s cd).
-const DIVE_TIME = 0.45, DIVE_CD = 10, DIVE_REACH = 620, DIVE_AOE = 150, DIVE_DMG = 120;
+// ---------- abilities: double-tap dodge · grapple · chi burst · deflect · kunai ----------
+// Dodge: double-tap a movement key. Each of the 4 directions has its OWN
+// cooldown — dash a different way instantly, but you can't spam one direction.
+const DODGE_TIME = 0.18, DODGE_SPEED = 700, DODGE_CD = 1.6, DTAP_WINDOW = 0.28;
+const DIRV = { up:[0,-1], down:[0,1], left:[-1,0], right:[1,0] };
+// Grappling hook (left-click): fling a hook to the cursor; it anchors on the
+// first solid tile / enemy / max range, then yanks you to it (i-frames).
+const HOOK_SPEED = 1500, HOOK_RANGE = 560, HOOK_PULL = 1150, GRAPPLE_CD = 4, HOOK_DMG = 20;
+// Chi Burst (right-click): a targeted explosion centred on the cursor.
+const CHI_CD = 6, CHI_AOE = 130, CHI_DMG = 90;
+// Throwing kunai: auto-thrown at whatever the cursor hovers, if it's in range.
+const KUNAI_CD = 0.7, KUNAI_DMG = 16, KUNAI_SPEED = 360, KUNAI_RANGE = 360;
 // Deflect Burst (spacebar): a brief parry window that turns nearby enemy bolts
 // back on their casters. The tight window is what makes it a timing move.
+const AIM_DMG = 15, AIM_SPEED = 560;                        // speed/dmg basis for deflected bolts
 const DEFLECT_WINDOW = 0.18, DEFLECT_CD = 1.4, DEFLECT_R = 110, DEFLECT_DMG = 2.0;
 // Global projectile speed scale — every shot (yours and theirs) flies at half pace.
 const PROJ_SLOW = 0.5;
 // Telegraph/charge-up duration scale — every wind-up tell takes twice as long.
 const TELL_MUL = 2;
-function startRoll(){
+// Dodge dash in a cardinal direction (called from the double-tap detector).
+function tryDodge(dir){
   const P = player;
-  if (!P || P.rollT > 0 || P.rollCd > 0 || P.diveT > 0) return;
-  const a = aimAngle(P.x, P.y);                 // dodge toward the clicked location
-  P.raDx = Math.cos(a); P.raDy = Math.sin(a);
-  P.rollT = ROLL_TIME; P.rollCd = ROLL_CD;
-  P.inv = Math.max(P.inv, ROLL_TIME + 0.06);    // invulnerable through the roll
-  lastAng = a;
+  if (!game || game.state !== STATE.PLAY || game.dojoMode || !P) return;
+  if (P.rollT > 0 || (P.dodgeCd && P.dodgeCd[dir] > 0)) return;
+  const vv = DIRV[dir]; if (!vv) return;
+  P.raDx = vv[0]; P.raDy = vv[1];
+  P.rollT = DODGE_TIME; P.dodgeCd[dir] = DODGE_CD;
+  P.inv = Math.max(P.inv, DODGE_TIME + 0.06);   // invulnerable through the dash
+  lastAng = Math.atan2(vv[1], vv[0]);
   for (let i=0;i<8;i++){ const sa=rand(0,TAU), sp=rand(40,110);
     fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(sa)*sp, vy:Math.sin(sa)*sp, t:0, life:rand(.2,.4), c:'#cdbfa0' }); }
 }
-// Diving bomb: arc to the clicked location (i-frames the whole way) and detonate.
-function startDive(){
+// Grappling hook — fire toward the cursor.
+function startGrapple(){
   const P = player;
-  if (!P || P.diveCd > 0 || P.diveT > 0 || P.rollT > 0) return;
+  if (!P || P.grappleCd > 0 || P.hook) return;
+  const a = aimAngle(P.x, P.y);
+  P.hook = { phase:'out', x:P.x, y:P.y, dx:Math.cos(a), dy:Math.sin(a), ax:0, ay:0 };
+  P.grappleCd = GRAPPLE_CD;
+  lastAng = a;
+}
+// Advance the live hook: travel out, anchor on a hit, then reel the player in.
+function updateGrapple(dt){
+  const P = player, h = P.hook; if (!h) return;
+  if (h.phase === 'out'){
+    h.x += h.dx*HOOK_SPEED*dt; h.y += h.dy*HOOK_SPEED*dt;
+    for (const e of enemies){
+      if (e.dead || e.dummy) continue;
+      if (Math.hypot(e.x-h.x, e.y-h.y) < e.r + 8){
+        // anchor just short of the foe so the reel doesn't dump us inside it
+        h.ax = e.x - h.dx*(e.r+P.r); h.ay = e.y - h.dy*(e.r+P.r);
+        h.phase='pull'; damage(e, HOOK_DMG*P.power, h.dx, h.dy); break;
+      }
+    }
+    if (h.phase === 'out'){
+      const t = game.grid ? game.grid.tile : TILE;
+      const solid = tileSolidCR(Math.floor(h.x/t), Math.floor(h.y/t));
+      if (solid){ h.ax = h.x - h.dx*(P.r+10); h.ay = h.y - h.dy*(P.r+10); h.phase='pull'; }  // land in front of the wall
+      else if (Math.hypot(h.x-P.x, h.y-P.y) >= HOOK_RANGE){ h.ax=h.x; h.ay=h.y; h.phase='pull'; }
+    }
+  } else {                                   // reel in (i-frames; bail if we get stuck)
+    const dx=h.ax-P.x, dy=h.ay-P.y, d=Math.hypot(dx,dy)||1, step=HOOK_PULL*dt;
+    P.inv = Math.max(P.inv, dt+0.02);
+    if (d <= step + 8 || (h.lastD != null && d > h.lastD - 0.5)){
+      P.hook = null; P.inv = Math.max(P.inv, 0.25);
+    } else {
+      P.x += dx/d*step; P.y += dy/d*step; h.lastD = d;
+    }
+  }
+}
+// Chi Burst — instant targeted explosion at the cursor.
+function startChiBurst(){
+  const P = player;
+  if (!P || P.chiCd > 0) return;
   const wx = game.cam.x + (mouse.x - W/2)/viewScale;
   const wy = game.cam.y + (mouse.y - H/2)/viewScale;
-  let dx = wx - P.x, dy = wy - P.y; const L = Math.hypot(dx,dy) || 1;
-  const reach = Math.min(L, DIVE_REACH);
-  P.dsx = P.x; P.dsy = P.y; P.dtx = P.x + dx/L*reach; P.dty = P.y + dy/L*reach;
-  P.diveT = DIVE_TIME; P.diveMax = DIVE_TIME; P.diveCd = DIVE_CD;
-  P.inv = Math.max(P.inv, DIVE_TIME + 0.05);
-  lastAng = Math.atan2(dy, dx);
-  for (let i=0;i<10;i++){ const a=rand(0,TAU), sp=rand(60,140);
-    fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.2,.4), c:'#ffd34d' }); }
-}
-function resolveDive(){
-  const P = player;
-  shake = Math.max(shake, 16);
-  const R = DIVE_AOE, dmg = DIVE_DMG * P.power;
+  P.chiCd = CHI_CD; shake = Math.max(shake, 12);
+  const R = CHI_AOE, dmg = CHI_DMG * P.power;
   for (const e of enemies){
     if (e.dead || e.dummy) continue;
-    const dx = e.x - P.x, dy = e.y - P.y;
-    if (dx*dx + dy*dy < (R + e.r)*(R + e.r)) damage(e, dmg, dx, dy);
+    const dx=e.x-wx, dy=e.y-wy;
+    if (dx*dx + dy*dy < (R+e.r)*(R+e.r)) damage(e, dmg, dx, dy);
   }
-  fx.push({ kind:'shock', x:P.x, y:P.y, r:R, t:0, life:0.5, c:'#ffd34d' });
-  for (let i=0;i<28;i++){ const a=rand(0,TAU), sp=rand(120,320);
-    fx.push({ kind:'spark', x:P.x, y:P.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.7), c:'#ffd34d' }); }
+  fx.push({ kind:'shock', x:wx, y:wy, r:R, t:0, life:0.5, c:'#9be3ff' });
+  for (let i=0;i<26;i++){ const a=rand(0,TAU), sp=rand(100,300);
+    fx.push({ kind:'spark', x:wx, y:wy, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.6), c:'#9be3ff' }); }
+}
+// Throwing kunai — auto-loose at the enemy under the cursor if it's in range.
+function throwKunai(tgt){
+  const P = player;
+  const a = Math.atan2(tgt.y - P.y, tgt.x - P.x);
+  shots.push({ kind:'kunai', x:P.x, y:P.y, vx:Math.cos(a)*KUNAI_SPEED, vy:Math.sin(a)*KUNAI_SPEED,
+    dmg:KUNAI_DMG*P.power, r:6, life:2.0, pierce:0, rot:a });
+  lastAng = a;
+}
+function tryThrowKunai(){
+  const P = player;
+  if (!usingMouse || P.kunaiCd > 0 || game.dojoMode) return;
+  const wx = game.cam.x + (mouse.x - W/2)/viewScale;
+  const wy = game.cam.y + (mouse.y - H/2)/viewScale;
+  let tgt=null, best=Infinity;
+  for (const e of enemies){
+    if (e.dead || e.dummy) continue;
+    const dx=e.x-wx, dy=e.y-wy, d2=dx*dx+dy*dy; if (d2<best){ best=d2; tgt=e; }
+  }
+  if (!tgt) return;
+  const overCursor = best < (tgt.r + 30)*(tgt.r + 30);            // cursor is hovering it
+  const inRange = Math.hypot(tgt.x-P.x, tgt.y-P.y) < KUNAI_RANGE;  // and it's reachable
+  if (overCursor && inRange){ throwKunai(tgt); P.kunaiCd = KUNAI_CD; }
 }
 // Deflect Burst: open a brief parry window; bolt deflection is handled in the
 // shot loop while player.deflectT is positive.
@@ -1864,22 +1940,12 @@ function update(dt){
   const v = inputVec();
   P.moving = !!(v.x || v.y);
   if (P.moving){ lastAng = Math.atan2(v.y, v.x); P.walkPhase += dt*12; }
-  if (P.rollCd > 0) P.rollCd -= dt;
-  if (P.diveCd > 0) P.diveCd -= dt;
-  if (P.diveT > 0){
-    // diving bomb in flight — arc to the locked target, then detonate on landing
-    P.diveT -= dt;
-    const k = clamp(1 - Math.max(0, P.diveT)/P.diveMax, 0, 1);
-    P.x = P.dsx + (P.dtx - P.dsx)*k;
-    P.y = P.dsy + (P.dty - P.dsy)*k;
-    P.inv = Math.max(P.inv, dt + 0.02);
-    if (P.diveT <= 0) resolveDive();
-  } else {
-    let mvx = v.x * P.speed, mvy = v.y * P.speed;
-    if (P.rollT > 0){ P.rollT -= dt; mvx = P.raDx * ROLL_SPEED; mvy = P.raDy * ROLL_SPEED; }
-    P.x += mvx * dt;
-    P.y += mvy * dt;
-  }
+  for (const d in P.dodgeCd) if (P.dodgeCd[d] > 0) P.dodgeCd[d] -= dt;   // per-direction dodge cd
+  let mvx = v.x * P.speed, mvy = v.y * P.speed;
+  if (P.rollT > 0){ P.rollT -= dt; mvx = P.raDx * DODGE_SPEED; mvy = P.raDy * DODGE_SPEED; }
+  // a grapple reel overrides normal movement; otherwise walk/dash as usual
+  if (!(P.hook && P.hook.phase === 'pull')){ P.x += mvx * dt; P.y += mvy * dt; }
+  updateGrapple(dt);
   if (game.dojoMode){
     // clamp to dojo room
     const hw = DOJO.WIDTH/2 - P.r - DOJO.WALL;
@@ -1922,6 +1988,10 @@ function update(dt){
   if (P.hurt>0) P.hurt -= dt;
   if (P.deflectT>0) P.deflectT -= dt;
   if (P.deflectCd>0) P.deflectCd -= dt;
+  if (P.grappleCd>0) P.grappleCd -= dt;
+  if (P.chiCd>0) P.chiCd -= dt;
+  if (P.kunaiCd>0) P.kunaiCd -= dt;
+  if (!game.dojoMode) tryThrowKunai();   // auto-loose a kunai at the hovered foe
 
   // enemy flow (skip in dojo — peaceful). No ambient spawns: pressure comes
   // from the world's fixed summoner nests + each zone's boss building.
@@ -2720,6 +2790,14 @@ function draw(){
   // katana arcs
   for (const b of blades) drawArc(b);
 
+  // grappling-hook line + tip (under the player)
+  if (player && player.hook){
+    const h = player.hook;
+    ctx.strokeStyle = '#cdbfa0'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(player.x, player.y); ctx.lineTo(h.x, h.y); ctx.stroke();
+    ctx.fillStyle = '#e8e0d0';
+    ctx.beginPath(); ctx.arc(h.x, h.y, 5, 0, TAU); ctx.fill();
+  }
   // aura (iron wind) — under the player so the figure stays centered in it
   drawAuras();
   // player
@@ -2742,8 +2820,8 @@ function draw(){
 function drawAbilityHud(){
   const P = player; if (!P) return;
   const items = [
-    { k:'LMB', name:'Dodge',   cd:P.rollCd||0,    max:ROLL_CD },
-    { k:'RMB', name:'Dive',    cd:P.diveCd||0,    max:DIVE_CD },
+    { k:'LMB', name:'Grapple', cd:P.grappleCd||0, max:GRAPPLE_CD },
+    { k:'RMB', name:'Chi Burst', cd:P.chiCd||0,   max:CHI_CD },
     { k:'SPC', name:'Deflect', cd:P.deflectCd||0, max:DEFLECT_CD },
   ];
   const n=items.length, bw=64, bh=30, gap=10, totalW=n*bw+(n-1)*gap;
@@ -2769,7 +2847,7 @@ function drawAbilityHud(){
 }
 
 function drawReticle(){
-  const ready = !player || player.rollCd <= 0;   // reflects dodge-roll readiness
+  const ready = !player || player.grappleCd <= 0;   // reflects grapple readiness
   ctx.save();
   ctx.translate(mouse.x, mouse.y);
   ctx.strokeStyle = ready ? 'rgba(124,232,239,0.85)' : 'rgba(124,232,239,0.35)';
@@ -4566,7 +4644,8 @@ if (typeof location !== 'undefined' && location.search.indexOf('expose=1') !== -
     // --- headless-sim hooks (smoke test in test/smoke.js drives these) ---
     update, draw, STATE, WEAPONS, PASSIVES, ENEMY_TYPES,
     buildOptions, applyOption, gainXP, damage,
-    resolveDive, startDeflect, spawnMobGroup, despawnMob, MOB,
+    startGrapple, updateGrapple, startChiBurst, tryDodge, throwKunai, startDeflect,
+    spawnMobGroup, despawnMob, MOB,
     openGates, isWalkable, TILE, T_FLOOR, T_FOREST, T_WATER, T_GATE,
     buildDefaultMap, loadGridMap,
     get orbs(){ return orbs; }, get blades(){ return blades; },

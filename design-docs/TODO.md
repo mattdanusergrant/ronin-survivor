@@ -99,4 +99,25 @@ flood-fill gate-seal checks + node-graph editor) with a **square tile grid**:
 - Editor niceties: rectangle/fill tools, explicit gate→building linking,
   per-entity depth, undo. Branch/loop layouts are already possible (free paint).
 
+---
+
+## 5. Combat-control recast — ✅ DONE (2026-06-21)
+
+Reworked the player kit:
+- **Dodge is double-tap only**, with a **per-direction cooldown** (`tryDodge` +
+  `player.dodgeCd{up,down,left,right}`; double-tap detected in the keydown
+  handler via `DIR_OF`/`tapTime`/`DTAP_WINDOW`). Dash a different way instantly,
+  but not the same way twice.
+- **Left-click → grappling hook** (`startGrapple`/`updateGrapple`): flies to the
+  cursor, anchors on the first wall/enemy/max-range, reels you in with i-frames
+  (anchors back off walls/foes + a stuck-detector so the reel can't deadlock
+  against `pushOutOfObstacles`).
+- **Right-click → Chi Burst** (`startChiBurst`): instant targeted explosion at
+  the cursor. (Replaces the diving bomb.)
+- **Throwing kunai reintroduced** (`tryThrowKunai`/`throwKunai`): auto-loosed at
+  the enemy under the cursor when it's in range — no click. Slow projectile.
+- Deflect Burst (spacebar) unchanged. Ability HUD + reticle updated.
+- Smoke test +4 cases (chi burst, per-direction dodge cd, grapple resolve, kunai
+  throw) → 19/19.
+
 #LLM-generated
