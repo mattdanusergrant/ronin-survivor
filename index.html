@@ -1356,10 +1356,10 @@ function aimAngle(px, py){
 }
 
 // ---------- dodge roll · diving bomb · deflect burst ----------
-const ROLL_TIME = 0.22, ROLL_CD = 10, ROLL_SPEED = 620;     // left-click dodge roll (10s cd)
+const ROLL_TIME = 0.22, ROLL_CD = 2, ROLL_SPEED = 620;     // left-click dodge roll (2s cd)
 const AIM_DMG = 15, AIM_SPEED = 560;                        // speed/dmg basis for deflected bolts
-// Diving bomb (right-click): leap to the clicked spot and slam for big AoE (100s cd).
-const DIVE_TIME = 0.45, DIVE_CD = 100, DIVE_REACH = 620, DIVE_AOE = 150, DIVE_DMG = 120;
+// Diving bomb (right-click): leap to the clicked spot and slam for big AoE (10s cd).
+const DIVE_TIME = 0.45, DIVE_CD = 10, DIVE_REACH = 620, DIVE_AOE = 150, DIVE_DMG = 120;
 // Deflect Burst (spacebar): a brief parry window that turns nearby enemy bolts
 // back on their casters. The tight window is what makes it a timing move.
 const DEFLECT_WINDOW = 0.18, DEFLECT_CD = 1.4, DEFLECT_R = 110, DEFLECT_DMG = 2.0;

@@ -10,7 +10,7 @@ A *Vampire Survivors*–style horde-survival auto-battler, themed as an homage t
 
 ## Pillars
 
-1. **Active swordsman, automatic swarm-clear.** You move; your drafted weapons auto-fire; and you steer the fight with three mouse/space abilities — a **left-click dodge roll** toward the cursor (10s cd), a **right-click diving bomb** AoE (100s cd), and a **spacebar Deflect Burst** that parries enemy projectiles back on their casters. Decision-making lives in *positioning*, *ability timing*, and the *boon draft*. (Earlier builds were move-only; the combat layer was added deliberately, de-emphasising touch/mobile.)
+1. **Active swordsman, automatic swarm-clear.** You move; your drafted weapons auto-fire; and you steer the fight with three mouse/space abilities — a **left-click dodge roll** toward the cursor (2s cd), a **right-click diving bomb** AoE (10s cd), and a **spacebar Deflect Burst** that parries enemy projectiles back on their casters. Decision-making lives in *positioning*, *ability timing*, and the *boon draft*. (Earlier builds were move-only; the combat layer was added deliberately, de-emphasising touch/mobile.)
 2. **The swarm has a source.** A Souls/VS hybrid: the world is a quiet, explorable space dotted with **dormant summoners** along the roads. Wake one and it pumps out a VS-style spectral horde; cut through the adds, kill the summoner, and its whole horde vanishes. Clear an area and it's safe to navigate again. Difficulty is *place and depth* (which summoners you wake, how far out), not a global timer — and the world is clearable, resetting only when you **rest** at a campfire (or die).
 3. **Power fantasy by minute 5.** Start fragile with one blade; end the run a whirling storm of steel and spirit-fire. The curve from "barely surviving" to "screen-clearing" is the product.
 4. **Style is a feature.** Drawn-not-licensed art; high-contrast Afro-Samurai palette; satisfying hit-feedback (flash, knockback, sparks, screen-shake, damage numbers).
@@ -33,7 +33,7 @@ A run takes place in a gated world carved out of solid cherry-blossom forest (la
 
 Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait first. Built to this DoD — **all verified headlessly** (node syntax check + DOM-stubbed sim: spawn/kite/level-up/all-four-weapons/boss/render all pass):
 
-- **Control (desktop-first):** WASD/arrows to move; **left-click** dodge-rolls toward the cursor (i-frames; 10s cd); **right-click** is a diving bomb leap+slam toward the cursor (big AoE; 100s cd); **spacebar** is a Deflect Burst parry (and interacts when standing on something usable: campfire/Dojo/Dojo station). Drafted weapons auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
+- **Control (desktop-first):** WASD/arrows to move; **left-click** dodge-rolls toward the cursor (i-frames; 2s cd); **right-click** is a diving bomb leap+slam toward the cursor (big AoE; 10s cd); **spacebar** is a Deflect Burst parry (and interacts when standing on something usable: campfire/Dojo/Dojo station). Drafted weapons auto-fire. Touch drag-to-move is kept as a deprioritised fallback.
 - **4 weapons**, each 6 levels:
   | Weapon | Behaviour |
   |---|---|
@@ -60,7 +60,7 @@ Single self-contained file, vanilla JS + Canvas, no build step, mobile-portrait 
 
 ## Progression & balance (current first pass)
 
-- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact. Abilities: dodge roll = 0.22s i-frame dash, **10s cd** (left-click); diving bomb = 0.45s leap, 150px AoE, **100s cd** (right-click); Deflect Burst = 0.18s parry window, 1.4s cd (spacebar).
+- **Player:** 100 HP, 148 px/s, 0.7s i-frames on contact. Abilities: dodge roll = 0.22s i-frame dash, **2s cd** (left-click); diving bomb = 0.45s leap, 150px AoE, **10s cd** (right-click); Deflect Burst = 0.18s parry window, 1.4s cd (spacebar).
 - **Projectiles & tells:** all shots (player and enemy) fly at a global **0.5× speed**; all enemy charge-up telegraphs take **2× as long**. Combat is paced for read-and-react, not twitch.
 - **Level curve:** `xpNext = round(50 + lvl²·11.5 + lvl·30)` — gentle early, steepening.
 - **Global HP scale (`timeMul`):** `×(1 + t/75)` — applies to zone bosses (not nest adds, which scale by depth).
