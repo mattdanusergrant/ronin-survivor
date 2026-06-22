@@ -2948,11 +2948,25 @@ function drawForestCanopy(x, y, t, col, row){
     const n = [
       [0,-1], [1,0], [0,1], [-1,0],
     ];
+    ctx.save();
+    ctx.fillStyle = 'rgba(220, 135, 196, 0.92)';
     for (const [dx, dy] of n){
       const nc = col + dx, nr = row + dy;
       if (nc < 0 || nr < 0 || nc >= g.cols || nr >= g.rows) continue;
-      if (g.cells[nr*g.cols+nc] !== T_FOREST){ ox += dx * edgePush; oy += dy * edgePush; }
+      if (g.cells[nr*g.cols+nc] !== T_FOREST){
+        ox += dx * edgePush; oy += dy * edgePush;
+        ctx.beginPath();
+        ctx.ellipse(
+          x + t/2 + dx*t*0.42,
+          y + t/2 + dy*t*0.42,
+          dx ? t*0.32 : t*0.62,
+          dy ? t*0.32 : t*0.62,
+          0, 0, TAU
+        );
+        ctx.fill();
+      }
     }
+    ctx.restore();
   }
   const canopy = t * 2.75;
   ctx.save();
