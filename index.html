@@ -2895,6 +2895,11 @@ function drawTiles(camX, camY, VW, VH){
   const r0=Math.max(0,Math.floor(camY/t)), r1=Math.min(g.rows-1,Math.floor((camY+VH)/t));
   for (let row=r0; row<=r1; row++) for (let col=c0; col<=c1; col++)
     drawTile(g.cells[row*g.cols+col], col*t, row*t, t, col, row);
+  if (CHERRY_TREE_SPRITE._ready){
+    for (let row=r0; row<=r1; row++) for (let col=c0; col<=c1; col++){
+      if (g.cells[row*g.cols+col] === T_FOREST) drawForestCanopy(col*t, row*t, t, col, row);
+    }
+  }
   // faint red-sun vignette over it all
   const cx=game.cam.x, cy=game.cam.y;
   const grd = ctx.createRadialGradient(cx,cy,40, cx,cy, Math.max(VW,VH)*0.7);
@@ -2912,11 +2917,6 @@ function drawTile(v, x, y, t, col, row){
     ctx.fillStyle = '#0f120e'; ctx.fillRect(x,y,t,t);
     const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
     if (CHERRY_TREE_SPRITE._ready){
-      ctx.save();
-      ctx.translate(x + t/2, y + t/2);
-      ctx.rotate(f * TAU);
-      ctx.drawImage(CHERRY_TREE_SPRITE, -t*0.56, -t*0.56, t*1.12, t*1.12);
-      ctx.restore();
       return;
     }
     ctx.fillStyle = '#28321f';
@@ -2938,6 +2938,15 @@ function drawTile(v, x, y, t, col, row){
     ctx.beginPath(); ctx.moveTo(x+6,y+6); ctx.lineTo(x+t-6,y+t-6);
     ctx.moveTo(x+t-6,y+6); ctx.lineTo(x+6,y+t-6); ctx.stroke();
   }
+}
+function drawForestCanopy(x, y, t, col, row){
+  const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
+  const canopy = t * 2.15;
+  ctx.save();
+  ctx.translate(x + t/2, y + t/2);
+  ctx.rotate(f * TAU);
+  ctx.drawImage(CHERRY_TREE_SPRITE, -canopy/2, -canopy/2, canopy, canopy);
+  ctx.restore();
 }
 
 function drawDojoRoom(){
