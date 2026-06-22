@@ -2947,10 +2947,13 @@ function drawFloorTile(x, y, t, col, row){
   const s = Math.sin(col*19.1919 + row*31.4159) * 24634.6345;
   const f = s - Math.floor(s);
   const angle = (f - 0.5) * 0.28;
-  const size = t * 1.16;
+  const size = t * 1.42;
   ctx.save();
   ctx.translate(x + t/2, y + t/2);
   ctx.rotate(angle);
+  ctx.drawImage(SPR.tileFloor, -size/2, -size/2, size, size);
+  ctx.globalAlpha = 0.38;
+  ctx.rotate(Math.PI/2 + f * 0.4);
   ctx.drawImage(SPR.tileFloor, -size/2, -size/2, size, size);
   ctx.restore();
 }
