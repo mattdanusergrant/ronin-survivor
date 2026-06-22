@@ -303,6 +303,7 @@ const SPRITE_MANIFEST = {
   shop:       { file: 'shop.png',        size: 64 },  // wired (drawBuilding)
   camp:       { file: 'camp.png',        size: 64 },  // wired (drawBuilding)
   campfire:   { file: 'campfire.png',    size: 32 },  // wired (drawCampfire)
+  cherryTree: { file: 'cherry-tree.png', size: 64 },  // wired (drawTile forest)
   footpad:    { file: 'footpad.png',     size: 24 },  // wired (drawEnemy, by colour)
   roninEnemy: { file: 'ronin-enemy.png', size: 28 },  // wired (drawEnemy, by colour)
   brute:      { file: 'brute.png',       size: 36 },  // wired (drawEnemy, by colour)
@@ -338,6 +339,7 @@ const SPR = (() => {
 })();
 const RONIN_SPRITE = SPR.ronin;  // player draw site reads RONIN_SPRITE._ready
 const RONIN_ROLL_SPRITE = SPR.roninRoll;
+const CHERRY_TREE_SPRITE = SPR.cherryTree;
 let W = 0, H = 0, DPR = 1, viewScale = 1;
 const DESIGN_W = 700;  // target visible world width; smaller screens zoom out
 const MAX_PROJ_RANGE = 400;   // projectiles die after this many world units from spawn — keeps shots on-screen
@@ -2909,6 +2911,14 @@ function drawTile(v, x, y, t, col, row){
   } else if (v===T_FOREST){
     ctx.fillStyle = '#0f120e'; ctx.fillRect(x,y,t,t);
     const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
+    if (CHERRY_TREE_SPRITE._ready){
+      ctx.save();
+      ctx.translate(x + t/2, y + t/2);
+      ctx.rotate(f * TAU);
+      ctx.drawImage(CHERRY_TREE_SPRITE, -t*0.56, -t*0.56, t*1.12, t*1.12);
+      ctx.restore();
+      return;
+    }
     ctx.fillStyle = '#28321f';
     ctx.beginPath(); ctx.arc(x+t/2, y+t/2, t*0.44, 0, TAU); ctx.fill();
     ctx.fillStyle = ['#d98aa8','#c97a98','#e0a0b8'][(f*3)|0];
