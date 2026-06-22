@@ -2913,6 +2913,10 @@ function drawTile(v, x, y, t, col, row){
     drawFloorTile(x, y, t, col, row);
     return;
   }
+  if (v===T_WATER && SPR.tileWater && SPR.tileWater._ready){
+    drawWaterTile(x, y, t, col, row);
+    return;
+  }
   if (spr && spr._ready){ ctx.drawImage(spr, x, y, t, t); return; }
   if (v===T_FLOOR){
     ctx.fillStyle = ((col+row)&1) ? '#181b23' : '#1b1e28';
@@ -2952,6 +2956,17 @@ function drawFloorTile(x, y, t, col, row){
   ctx.translate(x + t/2, y + t/2);
   ctx.rotate(angle);
   ctx.drawImage(SPR.tileFloor, -size/2, -size/2, size, size);
+  ctx.restore();
+}
+function drawWaterTile(x, y, t, col, row){
+  const s = Math.sin(col*8.781 + row*23.143) * 19341.119;
+  const f = s - Math.floor(s);
+  const angle = (f - 0.5) * 0.05;
+  const size = t * 1.16;
+  ctx.save();
+  ctx.translate(x + t/2, y + t/2);
+  ctx.rotate(angle);
+  ctx.drawImage(SPR.tileWater, -size/2, -size/2, size, size);
   ctx.restore();
 }
 function drawForestCanopy(x, y, t, col, row){
