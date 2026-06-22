@@ -2941,9 +2941,24 @@ function drawTile(v, x, y, t, col, row){
 }
 function drawForestCanopy(x, y, t, col, row){
   const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
-  const canopy = t * 2.15;
+  const g = game.grid;
+  let ox = 0, oy = 0;
+  if (g){
+    const edgePush = t * 0.22;
+    const n = [
+      [0,-1], [1,0], [0,1], [-1,0],
+    ];
+    for (const [dx, dy] of n){
+      const nc = col + dx, nr = row + dy;
+      if (nc < 0 || nr < 0 || nc >= g.cols || nr >= g.rows) continue;
+      if (g.cells[nr*g.cols+nc] !== T_FOREST){ ox += dx * edgePush; oy += dy * edgePush; }
+    }
+  }
+  const canopy = t * 2.75;
   ctx.save();
-  ctx.translate(x + t/2, y + t/2);
+  ctx.translate(x + t/2 + ox, y + t/2 + oy);
+  ctx.fillStyle = 'rgba(214, 128, 190, 0.5)';
+  ctx.beginPath(); ctx.arc(0, 0, canopy * 0.38, 0, TAU); ctx.fill();
   ctx.rotate(f * TAU);
   ctx.drawImage(CHERRY_TREE_SPRITE, -canopy/2, -canopy/2, canopy, canopy);
   ctx.restore();
