@@ -2909,6 +2909,10 @@ function drawTiles(camX, camY, VW, VH){
 function drawTile(v, x, y, t, col, row){
   const spr = v===T_FOREST?SPR.tileForest : v===T_WATER?SPR.tileWater
             : v===T_GATE?SPR.tileGate : SPR.tileFloor;
+  if (v===T_FLOOR && SPR.tileFloor && SPR.tileFloor._ready){
+    drawFloorTile(x, y, t, col, row);
+    return;
+  }
   if (spr && spr._ready){ ctx.drawImage(spr, x, y, t, t); return; }
   if (v===T_FLOOR){
     ctx.fillStyle = ((col+row)&1) ? '#181b23' : '#1b1e28';
@@ -2938,6 +2942,17 @@ function drawTile(v, x, y, t, col, row){
     ctx.beginPath(); ctx.moveTo(x+6,y+6); ctx.lineTo(x+t-6,y+t-6);
     ctx.moveTo(x+t-6,y+6); ctx.lineTo(x+6,y+t-6); ctx.stroke();
   }
+}
+function drawFloorTile(x, y, t, col, row){
+  const s = Math.sin(col*19.1919 + row*31.4159) * 24634.6345;
+  const f = s - Math.floor(s);
+  const angle = (f - 0.5) * 0.28;
+  const size = t * 1.16;
+  ctx.save();
+  ctx.translate(x + t/2, y + t/2);
+  ctx.rotate(angle);
+  ctx.drawImage(SPR.tileFloor, -size/2, -size/2, size, size);
+  ctx.restore();
 }
 function drawForestCanopy(x, y, t, col, row){
   const s = Math.sin(col*12.9898 + row*78.233) * 43758.5, f = s - Math.floor(s);
