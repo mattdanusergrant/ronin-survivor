@@ -2997,6 +2997,16 @@ function drawDojoRoom(){
   // dark dirt floor
   ctx.fillStyle = '#1a1318';
   ctx.fillRect(-DOJO.WIDTH/2, -DOJO.HEIGHT/2, DOJO.WIDTH, DOJO.HEIGHT);
+  if (SPR.tileFloor && SPR.tileFloor._ready){
+    const tile = 64;
+    const x0 = -DOJO.WIDTH/2 - tile, x1 = DOJO.WIDTH/2 + tile;
+    const y0 = -DOJO.HEIGHT/2 - tile, y1 = DOJO.HEIGHT/2 + tile;
+    for (let y = y0, row = 0; y < y1; y += tile, row++){
+      for (let x = x0, col = 0; x < x1; x += tile, col++){
+        drawFloorTile(x, y, tile, col, row);
+      }
+    }
+  }
   // tatami-ish floor grid
   ctx.strokeStyle = 'rgba(220,180,120,0.06)'; ctx.lineWidth = 1/viewScale;
   const g = 56;
