@@ -1163,7 +1163,7 @@ function updateGrapple(dt){
     if (!e || e.dead){ P.hook = null; return; }
     h.x = e.x; h.y = e.y;
     const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx,dy) || 1;
-    const step = Math.min(d, HOOK_PULL * 1.25 * dt);
+    const step = Math.min(d, HOOK_PULL * 0.45 * dt);
     e.x += dx/d * step;
     e.y += dy/d * step;
     e.hit = Math.max(e.hit, 0.05);
@@ -3525,7 +3525,7 @@ function drawSpirit(e){
   ctx.beginPath(); ctx.arc(0, 3, e.r*1.8, 0, TAU); ctx.stroke();
   const spr = e.angry && SPR.spiritMad && SPR.spiritMad._ready ? SPR.spiritMad : SPR.spirit;
   if (spr && spr._ready){
-    const size = e.r * 2.35;
+    const size = e.r * 3.05;
     ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
     if (flash){
       ctx.globalCompositeOperation = 'source-atop';
