@@ -262,7 +262,7 @@ function draw(){
   const r0=Math.max(0,Math.floor((cam.y-H/2/cam.scale)/t)), r1=Math.min(rows-1,Math.floor((cam.y+H/2/cam.scale)/t));
   for (let r=r0;r<=r1;r++) for (let c=c0;c<=c1;c++){
     const v = terrain[idx(c,r)];
-    ctx.fillStyle = v===T_FOREST ? '#1a2417' : v===T_WATER ? '#1d3b53' : (((c+r)&1)?'#181b23':'#1f232e');
+    ctx.fillStyle = v===T_FOREST ? '#1a2417' : v===T_WATER ? '#1d3b53' : (((c+r)&1)?'#b87548':'#c58452');
     ctx.fillRect(c*t, r*t, t, t);
   }
   // grid lines
