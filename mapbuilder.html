@@ -105,6 +105,12 @@ const TOOLS = [
   { id:'floor',   grp:'Terrain', label:'⬜ Floor',  paint:'terrain', v:T_FLOOR },
   { id:'forest',  grp:'Terrain', label:'🌳 Forest', paint:'terrain', v:T_FOREST },
   { id:'water',   grp:'Terrain', label:'💧 Water',  paint:'terrain', v:T_WATER },
+  { id:'floorRect',  grp:'Shapes', label:'⬜ Floor Square',  paint:'shape', shape:'rect', v:T_FLOOR },
+  { id:'floorCircle',grp:'Shapes', label:'⚪ Floor Circle',  paint:'shape', shape:'circle', v:T_FLOOR },
+  { id:'forestRect', grp:'Shapes', label:'🌳 Forest Square', paint:'shape', shape:'rect', v:T_FOREST },
+  { id:'forestCircle',grp:'Shapes', label:'🌳 Forest Circle', paint:'shape', shape:'circle', v:T_FOREST },
+  { id:'waterRect',  grp:'Shapes', label:'💧 Water Square',  paint:'shape', shape:'rect', v:T_WATER },
+  { id:'waterCircle',grp:'Shapes', label:'💧 Water Circle',  paint:'shape', shape:'circle', v:T_WATER },
   { id:'dojo',    grp:'Entities', label:'🏯 Dojo',          paint:'entity', kind:'dojo' },
   { id:'spawn',   grp:'Entities', label:'🚩 Player Spawn',  paint:'entity', kind:'spawn' },
   { id:'bandits', grp:'Buildings', label:'🏚️ Bandit Camp',     paint:'building', type:'bandits' },
@@ -128,7 +134,7 @@ let terrain = new Uint8Array(cols*rows).fill(T_FOREST);
 let entities = [];                 // { kind, type?, col, row }
 let tool = 'floor';
 const cam = { x: cols*TILE/2, y: rows*TILE/2, scale: 0.5 };
-let panning = false, painting = false, spaceDown = false, lastCell = null;
+let panning = false, painting = false, spaceDown = false, lastCell = null, shapeDrag = null;
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
@@ -214,6 +220,30 @@ function eraseAt(c, r){
   entities = entities.filter(e => !(e.col===c && e.row===r));
   if (entities.length === before) terrain[idx(c,r)] = T_FOREST;  // nothing to erase → clear terrain
 }
+function shapeCells(a, b, shape){
+  const dx = b.c - a.c, dy = b.r - a.r;
+  const side = Math.max(Math.abs(dx), Math.abs(dy));
+  const end = { c:a.c + Math.sign(dx || 1)*side, r:a.r + Math.sign(dy || 1)*side };
+  const c0 = Math.max(0, Math.min(a.c, end.c)), c1 = Math.min(cols-1, Math.max(a.c, end.c));
+  const r0 = Math.max(0, Math.min(a.r, end.r)), r1 = Math.min(rows-1, Math.max(a.r, end.r));
+  const cells = [];
+  const cx = (c0+c1)/2, cy = (r0+r1)/2;
+  const rx = Math.max(0.5, (c1-c0+1)/2), ry = Math.max(0.5, (r1-r0+1)/2);
+  for (let r=r0; r<=r1; r++) for (let c=c0; c<=c1; c++){
+    if (shape === 'circle'){
+      const nx = (c+0.5-cx-0.5)/rx, ny = (r+0.5-cy-0.5)/ry;
+      if (nx*nx + ny*ny > 1) continue;
+    }
+    cells.push({ c, r });
+  }
+  return cells;
+}
+function applyShapeDrag(){
+  if (!shapeDrag) return;
+  const t = toolById[shapeDrag.tool];
+  if (!t || t.paint !== 'shape') return;
+  for (const cell of shapeCells(shapeDrag.start, shapeDrag.end, t.shape)) terrain[idx(cell.c, cell.r)] = t.v;
+}
 
 /* ---------- palette ---------- */
 function buildPalette(){
@@ -292,6 +322,17 @@ function draw(){
     ctx.strokeStyle='#ffd97a'; ctx.lineWidth=2/cam.scale;
     ctx.strokeRect(hover.c*t, hover.r*t, t, t);
   }
+  if (shapeDrag){
+    const st = toolById[shapeDrag.tool];
+    const colors = { [T_FLOOR]:'rgba(255,217,122,0.38)', [T_FOREST]:'rgba(105,190,95,0.34)', [T_WATER]:'rgba(90,160,255,0.34)' };
+    ctx.fillStyle = colors[st.v] || 'rgba(255,255,255,0.28)';
+    ctx.strokeStyle = '#ffd97a'; ctx.lineWidth = 2/cam.scale;
+    ctx.beginPath();
+    for (const cell of shapeCells(shapeDrag.start, shapeDrag.end, st.shape)){
+      ctx.rect(cell.c*t, cell.r*t, t, t);
+    }
+    ctx.fill(); ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -299,6 +340,7 @@ let hover = null;
 cv.addEventListener('mousemove', e=>{
   hover = cellAt(e.clientX, e.clientY);
   if (panning){ cam.x -= e.movementX/cam.scale; cam.y -= e.movementY/cam.scale; draw(); return; }
+  if (painting === 'shape'){ shapeDrag.end = hover; draw(); return; }
   if (painting){ paintCell(hover); }
   else draw();
 });
@@ -311,10 +353,21 @@ function paintCell(cell){
 cv.addEventListener('mousedown', e=>{
   if (e.button===1 || spaceDown){ panning = true; e.preventDefault(); return; }
   const cell = cellAt(e.clientX, e.clientY);
+  const t = toolById[tool];
+  if (e.button===0 && t && t.paint === 'shape'){
+    painting = 'shape';
+    shapeDrag = { tool, start:cell, end:cell };
+    draw();
+    return;
+  }
   painting = (e.button===2) ? 'erase' : 'paint';
   lastCell = null; paintCell(cell);
 });
-window.addEventListener('mouseup', ()=>{ if (painting){ autosave(); } panning=false; painting=false; lastCell=null; });
+window.addEventListener('mouseup', ()=>{
+  if (painting === 'shape'){ applyShapeDrag(); shapeDrag = null; autosave(); refresh(); }
+  else if (painting){ autosave(); }
+  panning=false; painting=false; lastCell=null;
+});
 cv.addEventListener('contextmenu', e=> e.preventDefault());
 cv.addEventListener('wheel', e=>{
   e.preventDefault();
