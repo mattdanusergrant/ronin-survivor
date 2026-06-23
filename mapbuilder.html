@@ -105,11 +105,11 @@ const TOOLS = [
   { id:'floor',   grp:'Terrain', label:'⬜ Floor',  paint:'terrain', v:T_FLOOR },
   { id:'forest',  grp:'Terrain', label:'🌳 Forest', paint:'terrain', v:T_FOREST },
   { id:'water',   grp:'Terrain', label:'💧 Water',  paint:'terrain', v:T_WATER },
-  { id:'floorRect',  grp:'Shapes', label:'⬜ Floor Square',  paint:'shape', shape:'rect', v:T_FLOOR },
+  { id:'floorRect',  grp:'Shapes', label:'⬜ Floor Rectangle',  paint:'shape', shape:'rect', v:T_FLOOR },
   { id:'floorCircle',grp:'Shapes', label:'⚪ Floor Circle',  paint:'shape', shape:'circle', v:T_FLOOR },
-  { id:'forestRect', grp:'Shapes', label:'🌳 Forest Square', paint:'shape', shape:'rect', v:T_FOREST },
+  { id:'forestRect', grp:'Shapes', label:'🌳 Forest Rectangle', paint:'shape', shape:'rect', v:T_FOREST },
   { id:'forestCircle',grp:'Shapes', label:'🌳 Forest Circle', paint:'shape', shape:'circle', v:T_FOREST },
-  { id:'waterRect',  grp:'Shapes', label:'💧 Water Square',  paint:'shape', shape:'rect', v:T_WATER },
+  { id:'waterRect',  grp:'Shapes', label:'💧 Water Rectangle',  paint:'shape', shape:'rect', v:T_WATER },
   { id:'waterCircle',grp:'Shapes', label:'💧 Water Circle',  paint:'shape', shape:'circle', v:T_WATER },
   { id:'dojo',    grp:'Entities', label:'🏯 Dojo',          paint:'entity', kind:'dojo' },
   { id:'spawn',   grp:'Entities', label:'🚩 Player Spawn',  paint:'entity', kind:'spawn' },
@@ -223,7 +223,9 @@ function eraseAt(c, r){
 function shapeCells(a, b, shape){
   const dx = b.c - a.c, dy = b.r - a.r;
   const side = Math.max(Math.abs(dx), Math.abs(dy));
-  const end = { c:a.c + Math.sign(dx || 1)*side, r:a.r + Math.sign(dy || 1)*side };
+  const end = shape === 'circle'
+    ? { c:a.c + Math.sign(dx || 1)*side, r:a.r + Math.sign(dy || 1)*side }
+    : b;
   const c0 = Math.max(0, Math.min(a.c, end.c)), c1 = Math.min(cols-1, Math.max(a.c, end.c));
   const r0 = Math.max(0, Math.min(a.r, end.r)), r1 = Math.min(rows-1, Math.max(a.r, end.r));
   const cells = [];
