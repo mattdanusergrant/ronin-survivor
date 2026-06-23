@@ -1163,14 +1163,14 @@ function updateGrapple(dt){
     if (!e || e.dead){ P.hook = null; return; }
     h.x = e.x; h.y = e.y;
     const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx,dy) || 1;
-    const step = Math.min(d, HOOK_PULL * 0.45 * dt);
+    const step = Math.min(d, HOOK_PULL * 0.25 * dt);
     e.x += dx/d * step;
     e.y += dy/d * step;
     e.hit = Math.max(e.hit, 0.05);
     P.inv = Math.max(P.inv, dt+0.02);
     if (d <= P.r + e.r + 6){
       P.hook = null;
-      killEnemy(e);
+      claimSpirit(e);
     }
     return;
   }
@@ -1369,6 +1369,19 @@ function updateSpirit(e, dt){
   e.y += (vy + ny*wiggle) * e.speed * dt;
   pushOutOfObstacles(e);
   worldClamp(e);
+}
+
+function claimSpirit(e){
+  if (!e || e.dead) return;
+  e.dead = true;
+  game.kills++;
+  shake = Math.max(shake, 9);
+  fx.push({ kind:'dmg', x:player.x, y:player.y-48, v:'SPIRIT FREED', t:0, life:.8, vy:-18 });
+  for (let i=0;i<26;i++){
+    const a=rand(0,TAU), s=rand(70,240);
+    fx.push({ kind:'spark', x:e.x, y:e.y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, t:0, life:rand(.35,.85), c:'#cfefff' });
+  }
+  game.pendingSpiritBoon = 0.65;
 }
 
 // =====================================================================
@@ -2120,6 +2133,10 @@ function update(dt){
   if (P.chiCd>0) P.chiCd -= dt;
   if (P.kunaiCd>0) P.kunaiCd -= dt;
   if (!game.dojoMode) tryThrowKunai();   // auto-loose a kunai at the hovered foe
+  if (!game.dojoMode && game.pendingSpiritBoon > 0){
+    game.pendingSpiritBoon -= dt;
+    if (game.pendingSpiritBoon <= 0) openBuildingDraft('spirit');
+  }
   if (!game.dojoMode && game.spiritCd != null){
     game.spiritCd -= dt;
     if (game.spiritCd <= 0){
@@ -3525,7 +3542,7 @@ function drawSpirit(e){
   ctx.beginPath(); ctx.arc(0, 3, e.r*1.8, 0, TAU); ctx.stroke();
   const spr = e.angry && SPR.spiritMad && SPR.spiritMad._ready ? SPR.spiritMad : SPR.spirit;
   if (spr && spr._ready){
-    const size = e.r * 3.05;
+    const size = e.r * (e.angry ? 4.0 : 3.05);
     ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
     if (flash){
       ctx.globalCompositeOperation = 'source-atop';
