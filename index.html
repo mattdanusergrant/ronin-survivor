@@ -307,6 +307,7 @@ const SPRITE_MANIFEST = {
   footpad:    { file: 'footpad.png',     size: 24 },  // wired (drawEnemy, by colour)
   roninEnemy: { file: 'ronin-enemy.png', size: 28 },  // wired (drawEnemy, by colour)
   brute:      { file: 'brute.png',       size: 36 },  // wired (drawEnemy, by colour)
+  spirit:     { file: 'spirit.png',      size: 32 },  // wired (drawSpirit)
   boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },  // wired (drawOrb)
   sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc); tip-right, non-square art (canvas resizes to native on load)
@@ -1016,6 +1017,7 @@ function newGame(){
   };
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
+  game.spiritCd = rand(80, 140);
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   // load the world: custom grid map if one was authored, else the built-in
@@ -1161,7 +1163,7 @@ function updateGrapple(dt){
       if (Math.hypot(e.x-h.x, e.y-h.y) < e.r + 8){
         // anchor just short of the foe so the reel doesn't dump us inside it
         h.ax = e.x - h.dx*(e.r+P.r); h.ay = e.y - h.dy*(e.r+P.r);
-        h.phase='pull'; damage(e, HOOK_DMG*P.power, h.dx, h.dy); break;
+        h.phase='pull'; damage(e, HOOK_DMG*P.power, h.dx, h.dy, 'grapple'); break;
       }
     }
     if (h.phase === 'out'){
@@ -1280,6 +1282,41 @@ const ENEMY_SPRITE_KEY = { footpad:'footpad', ronin:'roninEnemy', brute:'brute' 
 const COLOR_TO_SPRITE = {};
 for (const k in ENEMY_TYPES){ if (ENEMY_SPRITE_KEY[k]) COLOR_TO_SPRITE[ENEMY_TYPES[k].color] = ENEMY_SPRITE_KEY[k]; }
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
+
+const SPIRIT = { hp:18, speed:118, r:9, xp:0, life:42, minCd:150, maxCd:240 };
+function scheduleNextSpirit(){ if (game) game.spiritCd = rand(SPIRIT.minCd, SPIRIT.maxCd); }
+function activeSpirit(){ return enemies.some(e => !e.dead && e.spirit); }
+function spawnSpirit(){
+  if (!game || game.dojoMode || activeSpirit()) return false;
+  for (let i=0; i<36; i++){
+    const a = rand(0, TAU), d = rand(360, 620);
+    const x = player.x + Math.cos(a)*d, y = player.y + Math.sin(a)*d;
+    if (!isWalkable(x, y, SPIRIT.r + 4)) continue;
+    enemies.push({
+      x, y, r:SPIRIT.r, hp:SPIRIT.hp, maxhp:SPIRIT.hp, speed:SPIRIT.speed,
+      dmg:0, xp:SPIRIT.xp, color:'#9fb0b8', hit:0, boss:false, sep:0,
+      state:'flee', sight:9999, callR:0, wDir:0, wTimer:0, wSpeed:0,
+      alertT:0, chargeT:0, chargeCheckT:9999, atkCd:99,
+      spirit:true, life:SPIRIT.life,
+    });
+    fx.push({ kind:'dmg', x, y:y-20, v:'SPIRIT', t:0, life:1.2, vy:-18 });
+    return true;
+  }
+  return false;
+}
+function updateSpirit(e, dt){
+  e.life -= dt;
+  if (e.life <= 0){ e.dead = true; return; }
+  const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy) || 1;
+  let vx = dx / d, vy = dy / d;
+  if (d > 520){ vx *= -0.35; vy *= -0.35; }
+  const wiggle = Math.sin((game.t + e.x*0.01 + e.y*0.02) * 3.8) * 0.55;
+  const nx = -vy, ny = vx;
+  e.x += (vx + nx*wiggle) * e.speed * dt;
+  e.y += (vy + ny*wiggle) * e.speed * dt;
+  pushOutOfObstacles(e);
+  worldClamp(e);
+}
 
 // =====================================================================
 //  ENEMY ATTACKS — telegraphed strikes + slow dodgeable projectiles.
@@ -1589,8 +1626,15 @@ function applyReward(kind){
 // =====================================================================
 //  DAMAGE / DEATH
 // =====================================================================
-function damage(e, dmg, kx=0, ky=0){
+function damage(e, dmg, kx=0, ky=0, source=''){
   if (e.dummy && (e.respawnT > 0 || e.hp <= 0)) return;  // can't hit a downed dummy
+  if (e.spirit && source !== 'grapple'){
+    if (!e.noteT || e.noteT <= 0){
+      fx.push({ kind:'dmg', x:e.x, y:e.y-e.r-12, v:'GRAPPLE', t:0, life:.55, vy:-20 });
+      e.noteT = 0.8;
+    }
+    return;
+  }
   e.hp -= dmg; e.hit = 0.12;
   if ((kx||ky) && !e.dummy){ const l=Math.hypot(kx,ky)||1; e.x += kx/l*6; e.y += ky/l*6; }
   fx.push({ kind:'dmg', x:e.x, y:e.y-e.r-4, v:Math.round(dmg), t:0, life:.6, vy:-26 });
@@ -1612,6 +1656,15 @@ function killEnemy(e){
     if (c) c.killed++;
   }
   if (player.lifesteal) player.hp = Math.min(player.maxhp, player.hp + player.lifesteal);  // Bloodpact boon
+  if (e.spirit){
+    shake = Math.max(shake, 7);
+    for (let i=0;i<18;i++){
+      const a=rand(0,TAU), s=rand(50,190);
+      fx.push({ kind:'spark', x:e.x, y:e.y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, t:0, life:rand(.35,.75), c:'#cfefff' });
+    }
+    openBuildingDraft('spirit');
+    return;
+  }
   if (e.summoner && e.nest){ e.nest.state = 'dead'; e.nest.summoner = null; dissolveHorde(e.nest, true); }
   if (e.boss) game.bossKills = (game.bossKills||0) + 1;
   if (e.boss) shake = Math.max(shake, 10);
@@ -2014,6 +2067,13 @@ function update(dt){
   if (P.chiCd>0) P.chiCd -= dt;
   if (P.kunaiCd>0) P.kunaiCd -= dt;
   if (!game.dojoMode) tryThrowKunai();   // auto-loose a kunai at the hovered foe
+  if (!game.dojoMode && game.spiritCd != null){
+    game.spiritCd -= dt;
+    if (game.spiritCd <= 0){
+      spawnSpirit();
+      scheduleNextSpirit();
+    }
+  }
 
   // enemy flow (skip in dojo — peaceful). No ambient spawns: pressure comes
   // from the world's fixed summoner nests + each zone's boss building.
@@ -2058,6 +2118,7 @@ function update(dt){
   for (const e of enemies){
     if (!e._id){ e._id = _eid++; }
     if (e.hit>0) e.hit -= dt;
+    if (e.noteT>0) e.noteT -= dt;
 
     // training dummies: don't move, don't attack — just respawn after death
     if (e.dummy){
@@ -2065,6 +2126,11 @@ function update(dt){
         e.respawnT -= dt;
         if (e.respawnT <= 0) e.hp = e.maxhp;
       }
+      continue;
+    }
+
+    if (e.spirit){
+      updateSpirit(e, dt);
       continue;
     }
 
@@ -2653,6 +2719,12 @@ const BUILDING_BOONS = {
     { ico:'💠', nm:'Avarice',   ds:'+50% ki · +40% pickup',      apply:p=>{ p.xpMult=(p.xpMult||1)*1.5; p.magnet*=1.4; } },
     { ico:'🧲', nm:'Magnetize', ds:'+80% pickup range · +10% ki', apply:p=>{ p.magnet*=1.8; p.xpMult=(p.xpMult||1)*1.1; } },
   ],
+  spirit: [
+    { ico:'*', nm:'Phantom Step',    ds:'+18% move speed',                        apply:p=>{ p.speed*=1.18; p.baseSpeed*=1.18; } },
+    { ico:'*', nm:'Hooked Soul',     ds:'+20% all damage',                        apply:p=>{ p.power*=1.2; } },
+    { ico:'*', nm:'Spirit Draft',    ds:'Gain a new weapon or upgrade your best', apply:p=>{ Math.random()<0.5 ? grantNewWeapon(p) : bumpBestWeapon(p); } },
+    { ico:'*', nm:'Quickened Blood', ds:'-18% cooldowns and +20% pickup range',   apply:p=>{ p.haste*=0.82; p.magnet*=1.2; } },
+  ],
 };
 const ALTAR_BY_GROUP = { combat:'altar-combat', defense:'altar-defense', utility:'altar-utility' };
 const DRAFT_TITLES = {
@@ -2661,6 +2733,7 @@ const DRAFT_TITLES = {
   'altar-combat': ['Smithy Altar',  'FORGE YOUR EDGE'],
   'altar-defense':['Vigor Altar',   'STEEL YOURSELF'],
   'altar-utility':['Spirit Altar',  'QUICKEN'],
+  spirit:         ['Fleeing Spirit','CLAIM A BOON'],
 };
 function openBuildingDraft(kind){
   const pool = BUILDING_BOONS[kind];
@@ -3390,8 +3463,32 @@ function drawSummoner(e){
   ctx.fillStyle = '#b07ce0'; ctx.fillRect(-e.r, -e.r*1.8, e.r*2*Math.max(0, e.hp/e.maxhp), 4);
   ctx.restore();
 }
+function drawSpirit(e){
+  ctx.save(); ctx.translate(e.x, e.y);
+  const t = game.t || 0, flash = e.hit>0, bob = Math.sin(t*7 + e.x*0.01)*2;
+  ctx.globalAlpha = 0.86 + 0.12*Math.sin(t*8);
+  ctx.shadowColor = '#cfefff'; ctx.shadowBlur = 12;
+  ctx.strokeStyle = 'rgba(210,240,255,0.45)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 3, e.r*1.8, 0, TAU); ctx.stroke();
+  if (SPR.spirit && SPR.spirit._ready){
+    const size = e.r * 2.35;
+    ctx.drawImage(SPR.spirit, -size/2, -size/2 + bob, size, size);
+    if (flash){
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.fillStyle = 'rgba(255,255,255,0.65)';
+      ctx.fillRect(-size/2, -size/2 + bob, size, size);
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  } else {
+    ctx.fillStyle = flash ? '#fff' : '#9fb0b8';
+    ctx.beginPath(); ctx.arc(0, bob, e.r, 0, TAU); ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
 function drawEnemy(e){
   if (e.dummy){ drawDummy(e); return; }
+  if (e.spirit){ drawSpirit(e); return; }
   if (e.summoner){ drawSummoner(e); return; }
   ctx.save(); ctx.translate(e.x,e.y);
   if (e.ghost) ctx.globalAlpha = 0.8;   // spectral adds are translucent
