@@ -1017,7 +1017,8 @@ function newGame(){
   };
   applyMeta(player);             // permanent Dojo upgrades
   game.bossKills = 0;
-  game.spiritCd = rand(25, 45);
+  game.spiritCd = 3;
+  game.firstSpirit = true;
   enemies=[]; orbs=[]; shots=[]; blades=[]; fx=[]; petals=[]; shake=0;
   runSnapshot = null;                  // fresh runs invalidate any saved run
   // load the world: custom grid map if one was authored, else the built-in
@@ -1283,26 +1284,28 @@ const COLOR_TO_SPRITE = {};
 for (const k in ENEMY_TYPES){ if (ENEMY_SPRITE_KEY[k]) COLOR_TO_SPRITE[ENEMY_TYPES[k].color] = ENEMY_SPRITE_KEY[k]; }
 function timeMul(){ return 1 + game.t / 75; }              // global HP scaling
 
-const SPIRIT = { hp:18, speed:108, r:9, xp:0, life:70, minCd:150, maxCd:240, retryCd:12 };
+const SPIRIT = { hp:18, speed:108, r:9, xp:0, life:70, minCd:150, maxCd:240, retryCd:4 };
 function scheduleNextSpirit(){ if (game) game.spiritCd = rand(SPIRIT.minCd, SPIRIT.maxCd); }
 function activeSpirit(){ return enemies.some(e => !e.dead && e.spirit); }
 function findSpiritSpawnSpot(){
   const g = game && game.grid;
   if (!g) return null;
   const t = g.tile;
-  const pc = Math.floor(player.x / t), pr = Math.floor(player.y / t);
+  const first = !!game.firstSpirit;
   let best = null, bestScore = -Infinity;
-  for (let i=0; i<160; i++){
-    const col = pc + irand(-11, 11);
-    const row = pr + irand(-11, 11);
-    if (col<1 || row<1 || col>=g.cols-1 || row>=g.rows-1) continue;
-    if (g.cells[row*g.cols + col] !== T_FLOOR) continue;
-    const x = col*t + t*0.5, y = row*t + t*0.5;
-    if (!isWalkable(x, y, SPIRIT.r + 6)) continue;
-    const d = Math.hypot(x - player.x, y - player.y);
-    if (d < 220 || d > 620) continue;
-    const score = 620 - Math.abs(d - 390) + rand(0, 80);
-    if (score > bestScore){ bestScore = score; best = { x, y }; }
+  const minD = first ? 120 : 220;
+  const maxD = first ? 360 : 620;
+  const targetD = first ? 230 : 390;
+  for (let radius=minD; radius<=maxD; radius+=24){
+    for (let i=0; i<32; i++){
+      const a = (i / 32) * TAU + radius * 0.017;
+      const x = player.x + Math.cos(a) * radius;
+      const y = player.y + Math.sin(a) * radius;
+      if (!isWalkable(x, y, SPIRIT.r + 6)) continue;
+      const d = Math.hypot(x - player.x, y - player.y);
+      const score = 1000 - Math.abs(d - targetD) + rand(0, 40);
+      if (score > bestScore){ bestScore = score; best = { x, y }; }
+    }
   }
   return best;
 }
@@ -1318,8 +1321,9 @@ function spawnSpirit(){
       alertT:0, chargeT:0, chargeCheckT:9999, atkCd:99,
       spirit:true, life:SPIRIT.life,
     });
-    fx.push({ kind:'dmg', x, y:y-20, v:'SPIRIT', t:0, life:1.2, vy:-18 });
+  fx.push({ kind:'dmg', x, y:y-20, v:'SPIRIT', t:0, life:1.2, vy:-18 });
   fx.push({ kind:'dmg', x:player.x, y:player.y-36, v:'SPIRIT NEARBY', t:0, life:1.2, vy:-18 });
+  game.firstSpirit = false;
   return true;
 }
 function updateSpirit(e, dt){
