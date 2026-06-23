@@ -100,11 +100,14 @@ const BTYPES = {
   vigor:   { name:'Hall of Vigor',    ico:'🛡️', color:'#5a7a9a' },
   spirit:  { name:'Spirit Pool',      ico:'⚡', color:'#4fa098' },
 };
-// tools: terrain brushes + entity stamps + eraser
+// tools: terrain paint, bucket fills, shapes, entity stamps, and eraser
 const TOOLS = [
   { id:'floor',   grp:'Terrain', label:'⬜ Floor',  paint:'terrain', v:T_FLOOR },
   { id:'forest',  grp:'Terrain', label:'🌳 Forest', paint:'terrain', v:T_FOREST },
   { id:'water',   grp:'Terrain', label:'💧 Water',  paint:'terrain', v:T_WATER },
+  { id:'floorBucket', grp:'Buckets', label:'⬜ Floor Bucket', paint:'bucket', v:T_FLOOR },
+  { id:'forestBucket', grp:'Buckets', label:'🌳 Forest Bucket', paint:'bucket', v:T_FOREST },
+  { id:'waterBucket', grp:'Buckets', label:'💧 Water Bucket', paint:'bucket', v:T_WATER },
   { id:'floorRect',  grp:'Shapes', label:'⬜ Floor Rectangle',  paint:'shape', shape:'rect', v:T_FLOOR },
   { id:'floorCircle',grp:'Shapes', label:'⚪ Floor Circle',  paint:'shape', shape:'circle', v:T_FLOOR },
   { id:'forestRect', grp:'Shapes', label:'🌳 Forest Rectangle', paint:'shape', shape:'rect', v:T_FOREST },
@@ -203,6 +206,7 @@ function applyTool(c, r){
   if (!inBounds(c,r)) return;
   const t = toolById[tool];
   if (t.paint === 'terrain'){ terrain[idx(c,r)] = t.v; return; }
+  if (t.paint === 'bucket'){ floodFill(c, r, t.v); return; }
   // entity stamp: dojo/spawn are unique; others can stack one-per-cell-per-kind
   const kind = t.kind || 'building';
   if (kind === 'dojo' || kind === 'spawn') entities = entities.filter(e => e.kind !== kind);
@@ -219,6 +223,18 @@ function eraseAt(c, r){
   const before = entities.length;
   entities = entities.filter(e => !(e.col===c && e.row===r));
   if (entities.length === before) terrain[idx(c,r)] = T_FOREST;  // nothing to erase → clear terrain
+}
+function floodFill(c, r, v){
+  if (!inBounds(c,r)) return;
+  const target = terrain[idx(c,r)];
+  if (target === v) return;
+  const stack = [{ c, r }];
+  while (stack.length){
+    const p = stack.pop();
+    if (!inBounds(p.c, p.r) || terrain[idx(p.c,p.r)] !== target) continue;
+    terrain[idx(p.c,p.r)] = v;
+    stack.push({ c:p.c+1, r:p.r }, { c:p.c-1, r:p.r }, { c:p.c, r:p.r+1 }, { c:p.c, r:p.r-1 });
+  }
 }
 function shapeCells(a, b, shape){
   const dx = b.c - a.c, dy = b.r - a.r;
