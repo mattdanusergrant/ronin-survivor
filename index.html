@@ -308,6 +308,7 @@ const SPRITE_MANIFEST = {
   roninEnemy: { file: 'ronin-enemy.png', size: 28 },  // wired (drawEnemy, by colour)
   brute:      { file: 'brute.png',       size: 36 },  // wired (drawEnemy, by colour)
   spirit:     { file: 'spirit.png',      size: 32 },  // wired (drawSpirit)
+  spiritMad:  { file: 'spiritmad.png',   size: 32 },  // wired (drawSpirit when grappled)
   boss:       { file: 'boss.png',        size: 48 },  // wired (drawEnemy)
   kiOrb:      { file: 'ki-orb.png',      size: 24 },  // wired (drawOrb)
   sword:      { file: 'sword.png',       size: 48 },  // wired (drawArc); tip-right, non-square art (canvas resizes to native on load)
@@ -1157,11 +1158,37 @@ function startGrapple(){
 // Advance the live hook: travel out, anchor on a hit, then reel the player in.
 function updateGrapple(dt){
   const P = player, h = P.hook; if (!h) return;
+  if (h.phase === 'spirit'){
+    const e = h.target;
+    if (!e || e.dead){ P.hook = null; return; }
+    h.x = e.x; h.y = e.y;
+    const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx,dy) || 1;
+    const step = Math.min(d, HOOK_PULL * 1.25 * dt);
+    e.x += dx/d * step;
+    e.y += dy/d * step;
+    e.hit = Math.max(e.hit, 0.05);
+    P.inv = Math.max(P.inv, dt+0.02);
+    if (d <= P.r + e.r + 6){
+      P.hook = null;
+      killEnemy(e);
+    }
+    return;
+  }
   if (h.phase === 'out'){
     h.x += h.dx*HOOK_SPEED*dt; h.y += h.dy*HOOK_SPEED*dt;
     for (const e of enemies){
       if (e.dead || e.dummy) continue;
       if (Math.hypot(e.x-h.x, e.y-h.y) < e.r + 8){
+        if (e.spirit){
+          e.captured = true;
+          e.angry = true;
+          e.hit = 0.2;
+          h.phase = 'spirit';
+          h.target = e;
+          h.x = e.x; h.y = e.y;
+          fx.push({ kind:'dmg', x:e.x, y:e.y-e.r-12, v:'PULL', t:0, life:.55, vy:-20 });
+          break;
+        }
         // anchor just short of the foe so the reel doesn't dump us inside it
         h.ax = e.x - h.dx*(e.r+P.r); h.ay = e.y - h.dy*(e.r+P.r);
         h.phase='pull'; damage(e, HOOK_DMG*P.power, h.dx, h.dy, 'grapple'); break;
@@ -1327,6 +1354,10 @@ function spawnSpirit(){
   return true;
 }
 function updateSpirit(e, dt){
+  if (e.captured){
+    e.life = Math.max(e.life, 3);
+    return;
+  }
   e.life -= dt;
   if (e.life <= 0){ e.dead = true; return; }
   const dx = e.x - player.x, dy = e.y - player.y, d = Math.hypot(dx, dy) || 1;
@@ -3488,13 +3519,14 @@ function drawSummoner(e){
 function drawSpirit(e){
   ctx.save(); ctx.translate(e.x, e.y);
   const t = game.t || 0, flash = e.hit>0, bob = Math.sin(t*7 + e.x*0.01)*2;
-  ctx.globalAlpha = 0.86 + 0.12*Math.sin(t*8);
+  ctx.globalAlpha = e.angry ? 0.98 : 0.86 + 0.12*Math.sin(t*8);
   ctx.shadowColor = '#cfefff'; ctx.shadowBlur = 12;
   ctx.strokeStyle = 'rgba(210,240,255,0.45)'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(0, 3, e.r*1.8, 0, TAU); ctx.stroke();
-  if (SPR.spirit && SPR.spirit._ready){
+  const spr = e.angry && SPR.spiritMad && SPR.spiritMad._ready ? SPR.spiritMad : SPR.spirit;
+  if (spr && spr._ready){
     const size = e.r * 2.35;
-    ctx.drawImage(SPR.spirit, -size/2, -size/2 + bob, size, size);
+    ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
     if (flash){
       ctx.globalCompositeOperation = 'source-atop';
       ctx.fillStyle = 'rgba(255,255,255,0.65)';
