@@ -3535,27 +3535,16 @@ function drawSummoner(e){
 }
 function drawSpirit(e){
   ctx.save(); ctx.translate(e.x, e.y);
-  const t = game.t || 0, flash = e.hit>0, bob = Math.sin(t*7 + e.x*0.01)*2;
-  ctx.globalAlpha = e.angry ? 0.98 : 0.86 + 0.12*Math.sin(t*8);
-  ctx.shadowColor = '#cfefff'; ctx.shadowBlur = 12;
-  ctx.strokeStyle = 'rgba(210,240,255,0.45)'; ctx.lineWidth = 1.5;
-  ctx.beginPath(); ctx.arc(0, 3, e.r*1.8, 0, TAU); ctx.stroke();
+  const t = game.t || 0, bob = Math.sin(t*7 + e.x*0.01)*2;
+  ctx.globalAlpha = e.angry ? 1 : 0.94;
   const spr = e.angry && SPR.spiritMad && SPR.spiritMad._ready ? SPR.spiritMad : SPR.spirit;
   if (spr && spr._ready){
     const size = e.r * (e.angry ? 4.0 : 3.05);
     ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
-    if (flash){
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.globalAlpha = 0.35;
-      ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
-      ctx.globalAlpha = e.angry ? 0.98 : 0.86 + 0.12*Math.sin(t*8);
-      ctx.globalCompositeOperation = 'source-over';
-    }
   } else {
-    ctx.fillStyle = flash ? '#fff' : '#9fb0b8';
+    ctx.fillStyle = '#9fb0b8';
     ctx.beginPath(); ctx.arc(0, bob, e.r, 0, TAU); ctx.fill();
   }
-  ctx.shadowBlur = 0;
   ctx.restore();
 }
 function drawEnemy(e){
