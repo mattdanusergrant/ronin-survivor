@@ -3545,9 +3545,10 @@ function drawSpirit(e){
     const size = e.r * (e.angry ? 4.0 : 3.05);
     ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
     if (flash){
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.fillStyle = 'rgba(255,255,255,0.65)';
-      ctx.fillRect(-size/2, -size/2 + bob, size, size);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.35;
+      ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
+      ctx.globalAlpha = e.angry ? 0.98 : 0.86 + 0.12*Math.sin(t*8);
       ctx.globalCompositeOperation = 'source-over';
     }
   } else {
