@@ -1164,6 +1164,7 @@ function updateGrapple(dt){
     h.x = e.x; h.y = e.y;
     const dx = P.x - e.x, dy = P.y - e.y, d = Math.hypot(dx,dy) || 1;
     const step = Math.min(d, HOOK_PULL * 0.25 * dt);
+    e.faceRight = dx > 0;
     e.x += dx/d * step;
     e.y += dy/d * step;
     e.hit = Math.max(e.hit, 0.05);
@@ -1346,7 +1347,7 @@ function spawnSpirit(){
       dmg:0, xp:SPIRIT.xp, color:'#9fb0b8', hit:0, boss:false, sep:0,
       state:'flee', sight:9999, callR:0, wDir:0, wTimer:0, wSpeed:0,
       alertT:0, chargeT:0, chargeCheckT:9999, atkCd:99,
-      spirit:true, life:SPIRIT.life,
+      spirit:true, life:SPIRIT.life, faceRight:false,
     });
   fx.push({ kind:'dmg', x, y:y-20, v:'SPIRIT', t:0, life:1.2, vy:-18 });
   fx.push({ kind:'dmg', x:player.x, y:player.y-36, v:'SPIRIT NEARBY', t:0, life:1.2, vy:-18 });
@@ -1365,8 +1366,10 @@ function updateSpirit(e, dt){
   if (d > 520){ vx *= -0.35; vy *= -0.35; }
   const wiggle = Math.sin((game.t + e.x*0.01 + e.y*0.02) * 3.8) * 0.55;
   const nx = -vy, ny = vx;
-  e.x += (vx + nx*wiggle) * e.speed * dt;
-  e.y += (vy + ny*wiggle) * e.speed * dt;
+  const mx = vx + nx*wiggle, my = vy + ny*wiggle;
+  if (Math.abs(mx) > 0.04) e.faceRight = mx > 0;
+  e.x += mx * e.speed * dt;
+  e.y += my * e.speed * dt;
   pushOutOfObstacles(e);
   worldClamp(e);
 }
@@ -3546,6 +3549,7 @@ function drawSpirit(e){
   const spr = e.angry && SPR.spiritMad && SPR.spiritMad._ready ? SPR.spiritMad : SPR.spirit;
   if (spr && spr._ready){
     const size = e.r * (e.angry ? 4.0 : 3.05);
+    if (!e.angry && e.faceRight) ctx.scale(-1, 1);
     ctx.drawImage(spr, -size/2, -size/2 + bob, size, size);
   } else {
     ctx.fillStyle = '#9fb0b8';
