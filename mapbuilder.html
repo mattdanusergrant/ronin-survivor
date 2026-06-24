@@ -46,6 +46,7 @@
   <label>rows <input id="rows" type="number" min="12" max="200" value="36"></label>
   <button id="btn-resize">Resize</button>
   <button id="btn-new">New</button>
+  <button id="btn-undo">Undo</button>
   <button id="btn-import">Import</button>
   <button id="btn-export">Export</button>
   <button id="btn-play" class="primary">▶ Playtest</button>
@@ -138,6 +139,7 @@ let entities = [];                 // { kind, type?, col, row }
 let tool = 'floor';
 const cam = { x: cols*TILE/2, y: rows*TILE/2, scale: 0.5 };
 let panning = false, painting = false, spaceDown = false, lastCell = null, shapeDrag = null;
+let undoStack = [];
 
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
@@ -146,6 +148,35 @@ let W=0, H=0, DPR=1;
 
 const idx = (c,r)=> r*cols + c;
 const inBounds = (c,r)=> c>=0 && r>=0 && c<cols && r<rows;
+
+function snapshotMap(){
+  return {
+    cols, rows,
+    name: D('mapname').value,
+    terrain: Uint8Array.from(terrain),
+    entities: entities.map(e => ({ ...e })),
+    cam: { x:cam.x, y:cam.y, scale:cam.scale },
+  };
+}
+function restoreSnapshot(s){
+  cols = s.cols; rows = s.rows;
+  terrain = Uint8Array.from(s.terrain);
+  entities = s.entities.map(e => ({ ...e }));
+  cam.x = s.cam.x; cam.y = s.cam.y; cam.scale = s.cam.scale;
+  D('mapname').value = s.name;
+  D('cols').value = cols; D('rows').value = rows;
+}
+function pushUndo(){
+  undoStack.push(snapshotMap());
+  if (undoStack.length > 50) undoStack.shift();
+}
+function undo(){
+  const s = undoStack.pop();
+  if (!s) return;
+  restoreSnapshot(s);
+  autosave();
+  refresh();
+}
 
 function newMap(c, r){
   cols = c; rows = r;
@@ -373,12 +404,14 @@ cv.addEventListener('mousedown', e=>{
   const cell = cellAt(e.clientX, e.clientY);
   const t = toolById[tool];
   if (e.button===0 && t && t.paint === 'shape'){
+    pushUndo();
     painting = 'shape';
     shapeDrag = { tool, start:cell, end:cell };
     draw();
     return;
   }
   painting = (e.button===2) ? 'erase' : 'paint';
+  pushUndo();
   lastCell = null; paintCell(cell);
 });
 window.addEventListener('mouseup', ()=>{
@@ -395,12 +428,17 @@ cv.addEventListener('wheel', e=>{
   cam.y = w.y - (e.clientY - H/2)/cam.scale;
   draw();
 }, { passive:false });
-addEventListener('keydown', e=>{ if (e.code==='Space'){ spaceDown=true; cv.style.cursor='grab'; } });
+addEventListener('keydown', e=>{
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='z'){ e.preventDefault(); undo(); return; }
+  if (e.code==='Space'){ spaceDown=true; cv.style.cursor='grab'; }
+});
 addEventListener('keyup',   e=>{ if (e.code==='Space'){ spaceDown=false; cv.style.cursor='crosshair'; } });
 
 /* ---------- toolbar ---------- */
-D('btn-new').onclick = ()=>{ if (confirm('Start a new map? Unsaved work is kept only in this browser.')) newMap(+D('cols').value||48, +D('rows').value||36); };
+D('btn-new').onclick = ()=>{ if (confirm('Start a new map? Unsaved work is kept only in this browser.')){ pushUndo(); newMap(+D('cols').value||48, +D('rows').value||36); } };
+D('btn-undo').onclick = undo;
 D('btn-resize').onclick = ()=>{
+  pushUndo();
   const nc=clamp(+D('cols').value||cols,12,200), nr=clamp(+D('rows').value||rows,12,200);
   const nt = new Uint8Array(nc*nr).fill(T_FOREST);
   for (let r=0;r<Math.min(rows,nr);r++) for (let c=0;c<Math.min(cols,nc);c++) nt[r*nc+c]=terrain[idx(c,r)];
@@ -416,7 +454,7 @@ D('btn-export').onclick = ()=>{
 D('btn-import').onclick = ()=> D('file').click();
 D('file').onchange = e=>{
   const f = e.target.files[0]; if (!f) return;
-  f.text().then(txt=>{ try { if (loadSpec(JSON.parse(txt))){ autosave(); refresh(); } else alert('Import failed — not a valid v2 grid map.'); }
+  f.text().then(txt=>{ try { const spec = JSON.parse(txt); if (spec && spec.version === 2) pushUndo(); if (loadSpec(spec)){ autosave(); refresh(); } else alert('Import failed — not a valid v2 grid map.'); }
     catch { alert('Import failed — not valid JSON.'); } });
   e.target.value = '';
 };
