@@ -44,6 +44,7 @@
   <input id="mapname" type="text" placeholder="map name" value="untitled">
   <label>cols <input id="cols" type="number" min="12" max="200" value="48"></label>
   <label>rows <input id="rows" type="number" min="12" max="200" value="36"></label>
+  <label>brush <input id="brush-size" type="number" min="1" max="15" value="3"></label>
   <button id="btn-resize">Resize</button>
   <button id="btn-new">New</button>
   <button id="btn-undo">Undo</button>
@@ -106,6 +107,9 @@ const TOOLS = [
   { id:'floor',   grp:'Terrain', label:'⬜ Floor',  paint:'terrain', v:T_FLOOR },
   { id:'forest',  grp:'Terrain', label:'🌳 Forest', paint:'terrain', v:T_FOREST },
   { id:'water',   grp:'Terrain', label:'💧 Water',  paint:'terrain', v:T_WATER },
+  { id:'floorBrush', grp:'Brushes', label:'⬜ Floor Brush', paint:'brush', v:T_FLOOR },
+  { id:'forestBrush', grp:'Brushes', label:'🌳 Forest Brush', paint:'brush', v:T_FOREST },
+  { id:'waterBrush', grp:'Brushes', label:'💧 Water Brush', paint:'brush', v:T_WATER },
   { id:'floorBucket', grp:'Buckets', label:'⬜ Floor Bucket', paint:'bucket', v:T_FLOOR },
   { id:'forestBucket', grp:'Buckets', label:'🌳 Forest Bucket', paint:'bucket', v:T_FOREST },
   { id:'waterBucket', grp:'Buckets', label:'💧 Water Bucket', paint:'bucket', v:T_WATER },
@@ -239,6 +243,10 @@ function applyTool(c, r){
   if (!inBounds(c,r)) return;
   const t = toolById[tool];
   if (t.paint === 'terrain'){ terrain[idx(c,r)] = t.v; return; }
+  if (t.paint === 'brush'){
+    for (const cell of brushCells(c, r)) terrain[idx(cell.c, cell.r)] = t.v;
+    return;
+  }
   if (t.paint === 'bucket'){ floodFill(c, r, t.v); return; }
   // entity stamp: dojo/spawn are unique; others can stack one-per-cell-per-kind
   const kind = t.kind || 'building';
@@ -268,6 +276,18 @@ function floodFill(c, r, v){
     terrain[idx(p.c,p.r)] = v;
     stack.push({ c:p.c+1, r:p.r }, { c:p.c-1, r:p.r }, { c:p.c, r:p.r+1 }, { c:p.c, r:p.r-1 });
   }
+}
+function brushSize(){
+  return clamp(+D('brush-size').value || 1, 1, 15) | 0;
+}
+function brushCells(c, r){
+  const size = brushSize();
+  const rad = Math.floor(size / 2);
+  const cells = [];
+  for (let rr=r-rad; rr<=r+rad; rr++) for (let cc=c-rad; cc<=c+rad; cc++){
+    if (inBounds(cc, rr)) cells.push({ c:cc, r:rr });
+  }
+  return cells;
 }
 function shapeCells(a, b, shape){
   const dx = b.c - a.c, dy = b.r - a.r;
@@ -373,6 +393,15 @@ function draw(){
     ctx.strokeStyle='#ffd97a'; ctx.lineWidth=2/cam.scale;
     ctx.strokeRect(hover.c*t, hover.r*t, t, t);
   }
+  const ht = toolById[tool];
+  if (hover && ht && ht.paint === 'brush'){
+    const colors = { [T_FLOOR]:'rgba(255,217,122,0.32)', [T_FOREST]:'rgba(105,190,95,0.28)', [T_WATER]:'rgba(90,160,255,0.28)' };
+    ctx.fillStyle = colors[ht.v] || 'rgba(255,255,255,0.24)';
+    ctx.strokeStyle = '#ffd97a'; ctx.lineWidth = 2/cam.scale;
+    ctx.beginPath();
+    for (const cell of brushCells(hover.c, hover.r)) ctx.rect(cell.c*t, cell.r*t, t, t);
+    ctx.fill(); ctx.stroke();
+  }
   if (shapeDrag){
     const st = toolById[shapeDrag.tool];
     const colors = { [T_FLOOR]:'rgba(255,217,122,0.38)', [T_FOREST]:'rgba(105,190,95,0.34)', [T_WATER]:'rgba(90,160,255,0.34)' };
@@ -439,6 +468,7 @@ addEventListener('keyup',   e=>{ if (e.code==='Space'){ spaceDown=false; cv.styl
 /* ---------- toolbar ---------- */
 D('btn-new').onclick = ()=>{ if (confirm('Start a new map? Unsaved work is kept only in this browser.')){ pushUndo(); newMap(+D('cols').value||48, +D('rows').value||36); } };
 D('btn-undo').onclick = undo;
+D('brush-size').oninput = ()=> draw();
 D('btn-resize').onclick = ()=>{
   pushUndo();
   const nc=clamp(+D('cols').value||cols,12,200), nr=clamp(+D('rows').value||rows,12,200);
