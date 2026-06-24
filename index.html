@@ -639,7 +639,7 @@ function loadGridMap(spec){
   const cells = Uint8Array.from(spec.terrain);
   const grid = { cols, rows, tile, cells };
   const cx = c => (c+0.5)*tile, cy = r => (r+0.5)*tile;
-  const buildings = [], nests = [], mobs = [], campfires = [], byId = {};
+  const buildings = [], nests = [], mobs = [], campfires = [], treasures = [], byId = {};
   let spawn = { x: cols*tile/2, y: rows*tile/2 };
 
   for (const e of spec.entities){
@@ -668,10 +668,12 @@ function loadGridMap(spec){
       mobs.push(makeMobGroup(cx(e.col), cy(e.row), e.kind, e.depth||1));
     else if (e.kind === 'campfire')
       campfires.push({ x:cx(e.col), y:cy(e.row), r:60 });
+    else if (e.kind === 'treasure')
+      treasures.push({ x:cx(e.col), y:cy(e.row), r:38, kind:'treasure', opened:false });
     else if (e.kind === 'spawn')
       spawn = { x:cx(e.col), y:cy(e.row) };
   }
-  return { grid, buildings, nests, mobs, campfires, spawn };
+  return { grid, buildings, nests, mobs, campfires, treasures, spawn };
 }
 
 // ---------- tile collision (replaces the old forest-circle obstacle grid) ----------
@@ -1030,6 +1032,7 @@ function newGame(){
   game.nests     = world.nests;
   game.mobs      = world.mobs;
   game.campfires = world.campfires;
+  game.treasures  = world.treasures || [];
   game.archers   = [];
   // drop the samurai on the authored spawn; the Dojo's four archers stand guard
   player.x = world.spawn.x; player.y = world.spawn.y;
@@ -1683,6 +1686,9 @@ function applyReward(kind){
   if (kind === 'ryo'){
     META.ryo += 50; META.totalRyo += 50; saveMeta();
     fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'+50 RYO', t:0, life:1.8, vy:-32 });
+  } else if (kind === 'treasure'){
+    META.ryo += 100; META.totalRyo += 100; saveMeta();
+    fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'+100 RYO', t:0, life:1.8, vy:-32 });
   } else if (kind === 'heal'){
     player.hp = player.maxhp;
     fx.push({ kind:'dmg', x:player.x, y:player.y-44, v:'FULL HEAL', t:0, life:1.8, vy:-32 });
@@ -2556,6 +2562,9 @@ function updateDojoStations(){
       if (!c.kind) c.kind = 'campfire';
       candidates.push(c);
     }
+    if (game.treasures) for (const c of game.treasures){
+      if (!c.opened) candidates.push(c);
+    }
   }
   for (const s of candidates){
     // world dojo is sealed once you step onto The Road; only death gets you back
@@ -2579,6 +2588,8 @@ function updateDojoStations(){
         const cost = game.xpNext;
         const prefix = near.kind === 'forge' ? 'FORGE' : 'REST + FORGE';
         label = (game.xp >= cost) ? `${prefix} · ${cost} KI` : `${prefix} · NEED ${cost} KI`;
+      } else if (near.kind === 'treasure'){
+        label = 'OPEN — Treasure Chest';
       } else if (near.kind === 'exit') label = 'LEAVE — ' + near.name;
       else label = 'ENTER — ' + near.name;
       btn.textContent = label;
@@ -2599,6 +2610,17 @@ function dojoActivate(){
   if (s.kind === 'shop')  { openDojoShop(s.group); return; }
   if (s.kind === 'campfire'){
     openCampfireMenu();
+    return;
+  }
+  if (s.kind === 'treasure'){
+    s.opened = true;
+    game.interactWith = null;
+    D('dojo-interact').classList.add('hidden');
+    applyReward('treasure');
+    for (let i=0;i<18;i++){
+      const a=rand(0,TAU), sp=rand(70,170);
+      fx.push({ kind:'spark', x:s.x, y:s.y, vx:Math.cos(a)*sp, vy:Math.sin(a)*sp, t:0, life:rand(.3,.7), c:'#ffd97a' });
+    }
     return;
   }
   if (s.kind === 'forge'){
@@ -2931,6 +2953,7 @@ function draw(){
   else {
     drawTiles(camX, camY, VW, VH);   // floor / forest / water / gate terrain
     if (game.campfires) for (const c of game.campfires) drawCampfire(c);
+    if (game.treasures) for (const c of game.treasures) drawTreasure(c);
     if (game.buildings) for (const b of game.buildings) drawBuilding(b);
     if (game.archers) for (const a of game.archers) drawArcher(a);
   }
@@ -3259,6 +3282,33 @@ function drawCampfire(c){
     ctx.fillStyle = '#ffe79b'; ctx.font = 'bold 10px -apple-system,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('★ checkpoint', 0, c.r + 14);
   }
+  ctx.restore();
+}
+
+function drawTreasure(c){
+  ctx.save(); ctx.translate(c.x, c.y);
+  const active = game && game.interactWith === c;
+  if (c.opened) ctx.globalAlpha = 0.45;
+  ctx.shadowColor = active ? '#ffd97a' : 'transparent';
+  ctx.shadowBlur = active ? 14 : 0;
+  ctx.fillStyle = c.opened ? '#4a3724' : '#7a4a22';
+  ctx.fillRect(-18, -10, 36, 22);
+  ctx.fillStyle = c.opened ? '#6a4a2a' : '#b87532';
+  ctx.fillRect(-18, -18, 36, 12);
+  ctx.strokeStyle = '#2a1710';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-18, -18, 36, 30);
+  ctx.strokeStyle = '#e7b53b';
+  ctx.beginPath(); ctx.moveTo(-18, -6); ctx.lineTo(18, -6); ctx.stroke();
+  ctx.fillStyle = '#ffd97a';
+  ctx.fillRect(-4, -7, 8, 9);
+  if (active && !c.opened){
+    ctx.font = 'bold 11px -apple-system,sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe79b';
+    ctx.fillText('100 Ryo', 0, 30);
+  }
+  ctx.shadowBlur = 0;
   ctx.restore();
 }
 

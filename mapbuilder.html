@@ -128,9 +128,10 @@ const TOOLS = [
   { id:'camp',    grp:'Spawns', label:'⛺ Camp',     paint:'entity', kind:'camp' },
   { id:'patrol',  grp:'Spawns', label:'🥷 Patrol',   paint:'entity', kind:'patrol' },
   { id:'campfire',grp:'Spawns', label:'🔥 Campfire', paint:'entity', kind:'campfire' },
+  { id:'treasure',grp:'Rewards', label:'💰 Treasure Chest', paint:'entity', kind:'treasure' },
 ];
 const toolById = Object.fromEntries(TOOLS.map(t=>[t.id,t]));
-const ENT_ICON = { dojo:'🏯', spawn:'🚩', gate:'🚧', nest:'🟣', camp:'⛺', patrol:'🥷', campfire:'🔥' };
+const ENT_ICON = { dojo:'🏯', spawn:'🚩', gate:'🚧', nest:'🟣', camp:'⛺', patrol:'🥷', campfire:'🔥', treasure:'💰' };
 
 /* ---------- editor state ---------- */
 let cols = 48, rows = 36;
@@ -211,6 +212,7 @@ function buildSpec(){
     else if (e.kind==='gate'){ const o=nearestBuilding(e.col,e.row); ents.push({ kind:'gate', col:e.col, row:e.row, owner:o?o._id:0 }); }
     else if (e.kind==='nest' || e.kind==='camp' || e.kind==='patrol'){ const o=nearestBuilding(e.col,e.row); ents.push({ kind:e.kind, col:e.col, row:e.row, depth:o?o._depth:1 }); }
     else if (e.kind==='campfire') ents.push({ kind:'campfire', col:e.col, row:e.row });
+    else if (e.kind==='treasure') ents.push({ kind:'treasure', col:e.col, row:e.row });
   }
   return { version:2, name: D('mapname').value.trim() || 'untitled', cols, rows, tile:TILE, terrain: Array.from(terrain), entities: ents };
 }
@@ -320,7 +322,7 @@ function refreshStatus(){
   const counts = {};
   for (const e of entities) counts[e.kind] = (counts[e.kind]||0)+1;
   items.push(`<span class="ok">${cols}×${rows} grid</span>`);
-  items.push(`${nb} building${nb===1?'':'s'} · ${counts.nest||0} nests · ${(counts.camp||0)+(counts.patrol||0)} camps/patrols · ${counts.gate||0} gates · ${counts.campfire||0} campfires`);
+  items.push(`${nb} building${nb===1?'':'s'} · ${counts.nest||0} nests · ${(counts.camp||0)+(counts.patrol||0)} camps/patrols · ${counts.gate||0} gates · ${counts.campfire||0} campfires · ${counts.treasure||0} chests`);
   D('status').innerHTML = items.join(' &nbsp;·&nbsp; ');
 }
 
